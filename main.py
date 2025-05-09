@@ -35,7 +35,7 @@ import importlib
 import glob
 
 # Import our AI helper
-from ai_helper import configure_genai, get_model, generate_content, get_response_text
+from ai_helper import configure_genai, get_model, generate_content, get_response_text, list_available_models
 
 # Create logs directory if it doesn't exist
 os.makedirs(LOG_DIR, exist_ok=True)
