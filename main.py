@@ -561,7 +561,7 @@ def analyze_sentiment(text: str) -> Dict[str, Any]:
 
 def extract_keywords(text: str, num_keywords: int = 10) -> List[str]:
     """
-    Extract the main keywords from text using NLTK.
+    Extract the main keywords from text using basic word frequency.
     
     Args:
         text: Text to analyze
@@ -571,19 +571,75 @@ def extract_keywords(text: str, num_keywords: int = 10) -> List[str]:
         List of keywords
     """
     try:
-        # Tokenize and convert to lowercase
-        tokens = nltk.word_tokenize(text.lower())
-        
-        # Remove stopwords and punctuation
-        stopwords = set(nltk.corpus.stopwords.words('english'))
-        words = [word for word in tokens if word.isalnum() and word not in stopwords]
-        
-        # Count word frequency
-        freq_dist = nltk.FreqDist(words)
-        
-        # Get the most common words
-        keywords = [word for word, _ in freq_dist.most_common(num_keywords)]
-        return keywords
+        # First, try to use NLTK if available
+        try:
+            # Make sure required NLTK data is downloaded
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+            
+            # Tokenize and convert to lowercase
+            tokens = nltk.word_tokenize(text.lower())
+            
+            # Remove stopwords and punctuation
+            stopwords = set(nltk.corpus.stopwords.words('english'))
+            words = [word for word in tokens if word.isalnum() and word not in stopwords]
+            
+            # Count word frequency
+            freq_dist = nltk.FreqDist(words)
+            
+            # Get the most common words
+            keywords = [word for word, _ in freq_dist.most_common(num_keywords)]
+            return keywords
+            
+        except Exception as nltk_error:
+            logger.warning(f"NLTK keyword extraction failed: {nltk_error}. Using fallback method.")
+            
+            # Fallback to a basic implementation if NLTK fails
+            # Define basic English stopwords
+            basic_stopwords = set([
+                'a', 'an', 'the', 'and', 'or', 'but', 'if', 'because', 'as', 'what',
+                'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 
+                'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself',
+                'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them',
+                'their', 'theirs', 'themselves', 'this', 'that', 'these', 'those', 'am',
+                'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had',
+                'having', 'do', 'does', 'did', 'doing', 'would', 'should', 'could', 'ought',
+                'i\'m', 'you\'re', 'he\'s', 'she\'s', 'it\'s', 'we\'re', 'they\'re', 'i\'ve',
+                'you\'ve', 'we\'ve', 'they\'ve', 'i\'d', 'you\'d', 'he\'d', 'she\'d', 'we\'d',
+                'they\'d', 'i\'ll', 'you\'ll', 'he\'ll', 'she\'ll', 'we\'ll', 'they\'ll',
+                'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t', 'hasn\'t', 'haven\'t', 'hadn\'t',
+                'doesn\'t', 'don\'t', 'didn\'t', 'won\'t', 'wouldn\'t', 'shan\'t', 'shouldn\'t',
+                'can\'t', 'cannot', 'couldn\'t', 'mustn\'t', 'let\'s', 'that\'s', 'who\'s',
+                'what\'s', 'here\'s', 'there\'s', 'when\'s', 'where\'s', 'why\'s', 'how\'s',
+                'for', 'of', 'to', 'in', 'on', 'at', 'by', 'with', 'about', 'against',
+                'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below',
+                'from', 'up', 'down', 'out', 'off', 'over', 'under', 'again', 'further',
+                'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any',
+                'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+                'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very'
+            ])
+            
+            # Simple tokenization (split by whitespace and remove punctuation)
+            words = []
+            for word in text.lower().split():
+                # Remove punctuation from the word
+                word = ''.join(c for c in word if c.isalnum())
+                if word and word not in basic_stopwords:
+                    words.append(word)
+            
+            # Count word frequency using a dictionary
+            word_freq = {}
+            for word in words:
+                if word in word_freq:
+                    word_freq[word] += 1
+                else:
+                    word_freq[word] = 1
+            
+            # Sort by frequency and get top words
+            sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+            keywords = [word for word, _ in sorted_words[:num_keywords]]
+            return keywords
+            
     except Exception as e:
         logger.error(f"Error extracting keywords: {e}")
         return []
