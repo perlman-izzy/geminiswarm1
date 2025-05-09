@@ -21,9 +21,9 @@ def read_file(path):
 
 def write_file(path, content):
     """Write content to a file with backup"""
+    backup_path = f"{path}.bak"
     try:
         # Create backup
-        backup_path = f"{path}.bak"
         if os.path.exists(path):
             logger.debug(f"Creating backup of {path} to {backup_path}")
             shutil.copy2(path, backup_path)

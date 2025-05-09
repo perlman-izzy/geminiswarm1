@@ -12,9 +12,12 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "default-secret-key")
 
-# API keys for Gemini - better to store in environment variables but including here for the example
-API_KEYS = [
-    "cwV8AcSbpNvcvrMwhDTArKjQsk",
+# Use environment variable for API key
+gemini_api_key = os.environ.get("GEMINI_API_KEY")
+
+# API keys for Gemini - use the environment variable if available, otherwise fallback to the list
+API_KEYS = [gemini_api_key] if gemini_api_key else [
+    "cwV8AcSbpNvcvrMwhDTArKjQsk",  # These are placeholder keys
     "AIzaSyBcwbIZPq3yqVonOG-8AqPSaUuv6vzQWyRE",
     "AIzaSyDln6sUGiaidN5CmKDGw3qt1spvgz94QKo",
     "AIzaSyDozMeIBRZrvGYSt8Ffua3rGp4DlDnONEo",
@@ -24,6 +27,8 @@ API_KEYS = [
     "AIzaSyCvKDI8jyoWDYGIaolxsi5A95MPxR2EDKQ",
     "AIzaSyAeONfijWy8EPJqAY3B0DJedepcGyYRrWU",
 ]
+# Remove any None values from API_KEYS
+API_KEYS = [key for key in API_KEYS if key]
 
 # Create a cyclic iterator through the API keys
 key_iter = itertools.cycle(API_KEYS)
