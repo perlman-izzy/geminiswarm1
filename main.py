@@ -737,6 +737,71 @@ def get_api_key() -> str:
     
     return selected_key
 
+# Cache for available models to avoid frequent API calls
+_available_models_cache = []
+_last_model_check_time = 0
+_MODEL_CACHE_TTL = 3600  # Cache TTL in seconds (1 hour)
+
+def get_available_models(api_key: str, verbose: bool = False) -> List[str]:
+    """
+    Get a list of available Gemini models by querying the API directly.
+    Uses caching to avoid frequent API calls.
+    
+    Args:
+        api_key: API key to use for the request
+        verbose: Whether to output verbose logs
+        
+    Returns:
+        List of available model names
+    """
+    global _available_models_cache, _last_model_check_time
+    
+    current_time = time.time()
+    
+    # If cache is valid, use it
+    if (_available_models_cache and 
+        current_time - _last_model_check_time < _MODEL_CACHE_TTL):
+        if verbose:
+            logger.info(f"Using cached model list ({len(_available_models_cache)} models)")
+        return _available_models_cache
+    
+    # Otherwise, refresh the cache
+    if verbose:
+        logger.info("Refreshing available models list from API")
+    
+    try:
+        # Configure the GenAI client with the API key
+        configure_genai(api_key)
+        
+        # Get the available models using the helper function
+        model_info = list_available_models()
+        
+        # Extract model names
+        model_names = [info["name"] for info in model_info]
+        
+        if verbose:
+            logger.info(f"Found {len(model_names)} models via API")
+            for name in model_names:
+                logger.info(f"  - {name}")
+        
+        # Update cache
+        _available_models_cache = model_names
+        _last_model_check_time = current_time
+        
+        return model_names
+    
+    except Exception as e:
+        logger.error(f"Error getting available models: {e}")
+        
+        # If cache exists, use it even if expired
+        if _available_models_cache:
+            logger.warning("Using expired model cache due to API error")
+            return _available_models_cache
+        
+        # Otherwise, return standard model names from config
+        logger.warning("Using fallback model list from configuration")
+        return list(set(GEMINI_MODELS.values()))
+
 def call_gemini_with_model_selection(
     prompt: str, 
     priority: str = "low", 
@@ -758,43 +823,73 @@ def call_gemini_with_model_selection(
     # Ensure we always return a dictionary, even in error cases
     result = {"response": "", "model_used": "none", "status": "error"}
     
-    # Choose model based on priority
-    # For high priority/complex tasks, use a more powerful model
-    if priority.lower() == "high":
-        primary_model = GEMINI_MODELS.get("pro")
-        backup_models = [GEMINI_MODELS.get("flash"), GEMINI_MODELS.get("fallback")]
-    else:
-        # For regular tasks, use the standard model
-        primary_model = GEMINI_MODELS.get("flash")
-        backup_models = [GEMINI_MODELS.get("pro"), GEMINI_MODELS.get("fallback")]
-    
-    # Initialize the model list with default fallback
-    default_model = GEMINI_MODELS.get("fallback")
-    models_to_try = []
-    
-    # Add primary model if not None
-    if primary_model:
-        models_to_try.append(primary_model)
-    
-    # Add backup models if not None
-    for model in backup_models:
-        if model and model not in models_to_try:
-            models_to_try.append(model)
-    
-    # Make sure we always have at least one model to try
-    if not models_to_try and default_model:
-        models_to_try.append(default_model)
-    
-    # If still no models, return an error
-    if not models_to_try:
-        result["response"] = "No valid models configured"
-        return result
-    
     # Get an API key
     api_key = get_api_key()
     if not api_key:
         result["response"] = "No valid API key available"
         return result
+    
+    # Get available models directly from the API
+    available_models = get_available_models(api_key, verbose)
+    
+    # Filter available models into tiers
+    pro_models = []
+    flash_models = []
+    fallback_models = []
+    
+    # Helper function to check if model matches patterns
+    def model_matches(model: str, patterns: List[str]) -> bool:
+        return any(pattern in model.lower() for pattern in patterns)
+    
+    # Categorize available models
+    for model in available_models:
+        model_lower = model.lower()
+        
+        # Use model name patterns to categorize
+        if "gemini-1.5-pro" in model_lower and "vision" not in model_lower:
+            pro_models.append(model)
+        elif "gemini-1.5-flash" in model_lower:
+            flash_models.append(model)
+        elif "gemini-1.0" in model_lower or "vision" in model_lower:
+            fallback_models.append(model)
+    
+    if verbose:
+        logger.info(f"Available API models - Pro: {len(pro_models)}, Flash: {len(flash_models)}, Fallback: {len(fallback_models)}")
+    
+    # Initialize the model list
+    models_to_try = []
+    
+    # For high priority tasks, try pro models first, then flash, then fallbacks
+    if priority.lower() == "high":
+        models_to_try.extend(pro_models)
+        models_to_try.extend(flash_models)
+        models_to_try.extend(fallback_models)
+    else:
+        # For regular tasks, try flash models first, then pro, then fallbacks
+        models_to_try.extend(flash_models)
+        models_to_try.extend(pro_models)
+        models_to_try.extend(fallback_models)
+    
+    # Remove any duplicates while preserving order
+    models_to_try = list(dict.fromkeys(models_to_try))
+    
+    # If no models found from API, fall back to configured models
+    if not models_to_try:
+        logger.warning("No available models from API, falling back to configured models")
+        
+        # Use configured models
+        configured_models = list(set(GEMINI_MODELS.values()))
+        if verbose:
+            logger.info(f"Using {len(configured_models)} configured models")
+        
+        models_to_try.extend(configured_models)
+    
+    # If still no models, return an error
+    if not models_to_try:
+        result["response"] = "No valid models configured or available"
+        return result
+        
+    # We already have an API key from earlier in the function
     
     # Configure the GenAI client
     configure_genai(api_key)

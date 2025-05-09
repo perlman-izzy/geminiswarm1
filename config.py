@@ -34,10 +34,29 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 # Model names
 GEMINI_MODELS = {
+    # Pro-level models (complex reasoning)
     "pro": "models/gemini-1.5-pro",
+    "pro_alt1": "models/gemini-1.5-pro-001",
+    "pro_alt2": "models/gemini-1.5-pro-preview-0514",
+    "pro_alt3": "models/gemini-1.5-pro-preview-0409", 
+    "pro_alt4": "models/gemini-1.5-pro-preview-0305",
+    "pro_alt5": "models/gemini-1.5-pro-experimental",
+    "pro_alt6": "models/gemini-1.5-pro-vision-latest",
+    "pro_old": "models/gemini-1.0-pro",
+    
+    # Flash models (faster, less complex reasoning)
     "flash": "models/gemini-1.5-flash",
-    "ultra": "models/gemini-1.5-pro-latest",  # May not be available in all regions
-    "fallback": "models/gemini-1.0-pro"
+    "flash_alt1": "models/gemini-1.5-flash-preview-0514",
+    "flash_alt2": "models/gemini-1.5-flash-preview-0409",
+    "flash_alt3": "models/gemini-1.5-flash-preview-0305",
+    "flash_alt4": "models/gemini-1.5-flash-experimental",
+    
+    # Latest models (may not be available in all regions)
+    "ultra": "models/gemini-1.5-pro-latest",
+    
+    # Fallback models
+    "fallback": "models/gemini-1.0-pro",
+    "fallback_alt": "models/gemini-1.0-pro-vision-latest"
 }
 
 # Port configurations

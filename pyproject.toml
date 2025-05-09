@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=0.51.0",
     "beautifulsoup4>=4.13.4",
     "duckduckgo-search>=8.0.1",
     "email-validator>=2.2.0",
@@ -15,6 +16,7 @@ dependencies = [
     "loguru>=0.7.3",
     "nltk>=3.9.1",
     "numpy>=2.2.5",
+    "openai>=1.78.0",
     "pandas>=2.2.3",
     "pillow>=11.2.1",
     "psycopg2-binary>=2.9.10",
