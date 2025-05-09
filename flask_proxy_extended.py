@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, render_template
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import ddg
+from duckduckgo_search import DDGS
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, 
