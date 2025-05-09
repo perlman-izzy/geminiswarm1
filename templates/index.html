@@ -1,183 +1,401 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini AI Proxy</title>
-    <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <title>Multi-Agent Gemini AI System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+        }
+        .loading {
+            display: none;
+        }
+        .result-container {
+            min-height: 200px;
+        }
+        pre {
+            white-space: pre-wrap;
+        }
+        .nav-tabs .nav-link {
+            cursor: pointer;
+        }
+        .tool-description {
+            font-size: 0.85rem;
+            color: var(--bs-secondary);
+        }
+    </style>
 </head>
-<body>
-    <div class="container mt-4">
+<body data-bs-theme="dark">
+    <div class="container">
+        <header class="mb-4">
+            <h1 class="text-center">Multi-Agent Gemini AI System</h1>
+            <p class="lead text-center">Intelligent model delegation & tool integration</p>
+        </header>
+
         <div class="row">
-            <div class="col-12">
-                <div class="card border-0 shadow mb-4">
-                    <div class="card-header bg-transparent border-bottom-0">
-                        <h1 class="card-title mb-0">
-                            <i class="bi bi-chat-dots-fill text-primary me-2"></i>
-                            Gemini AI Proxy
-                        </h1>
-                    </div>
-                    <div class="card-body">
-                        <p class="lead">
-                            This is a proxy server for Google's Gemini AI that uses API key rotation to distribute load.
-                        </p>
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle-fill me-2"></i>
-                            Use this interface to test the Gemini AI service or use the command-line client for automated workflows.
-                        </div>
+            <div class="col-md-3">
+                <div class="card mb-4">
+                    <div class="card-header">Tools</div>
+                    <div class="list-group list-group-flush" id="tool-list">
+                        <a class="list-group-item list-group-item-action active" data-tool="gemini">Gemini AI</a>
+                        <a class="list-group-item list-group-item-action" data-tool="web_search">Web Search</a>
+                        <a class="list-group-item list-group-item-action" data-tool="wikipedia">Wikipedia</a>
+                        <a class="list-group-item list-group-item-action" data-tool="scrape">Web Scraping</a>
+                        <a class="list-group-item list-group-item-action" data-tool="news">News Feed</a>
+                        <a class="list-group-item list-group-item-action" data-tool="trends">Trending Topics</a>
+                        <a class="list-group-item list-group-item-action" data-tool="sentiment">Sentiment Analysis</a>
+                        <a class="list-group-item list-group-item-action" data-tool="files">File Operations</a>
+                        <a class="list-group-item list-group-item-action" data-tool="command">Execute Command</a>
+                        <a class="list-group-item list-group-item-action" data-tool="package">Install Package</a>
                     </div>
                 </div>
-
-                <div class="card border-0 shadow">
-                    <div class="card-header bg-transparent">
-                        <h2 class="card-title h5 mb-0">Send a prompt to Gemini</h2>
-                    </div>
+                <div class="card">
+                    <div class="card-header">API Stats</div>
                     <div class="card-body">
-                        <form id="prompt-form">
-                            <div class="mb-3">
-                                <label for="prompt" class="form-label">Your prompt:</label>
-                                <textarea class="form-control" id="prompt" rows="4" placeholder="Enter your prompt here..." required></textarea>
-                            </div>
-                            <button type="submit" class="btn btn-primary" id="submit-btn">
-                                <i class="bi bi-send me-2"></i>Submit
-                            </button>
-                        </form>
-                    </div>
-                </div>
-
-                <div class="card border-0 shadow mt-4 d-none" id="response-card">
-                    <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
-                        <h2 class="card-title h5 mb-0">Response</h2>
-                        <button class="btn btn-sm btn-outline-secondary" id="copy-btn">
-                            <i class="bi bi-clipboard me-1"></i>Copy
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div class="response-container bg-dark p-3 rounded" id="response-text">
-                            <!-- Response will be displayed here -->
+                        <button id="refresh-stats" class="btn btn-sm btn-outline-info mb-2">Refresh</button>
+                        <div id="stats-container">
+                            <p>No stats available</p>
                         </div>
-                    </div>
-                </div>
-
-                <div class="card border-0 shadow mt-4">
-                    <div class="card-header bg-transparent">
-                        <h2 class="card-title h5 mb-0">API Usage</h2>
-                    </div>
-                    <div class="card-body">
-                        <p>You can also interact with this proxy using the command line client or by sending POST requests directly to the API:</p>
-                        
-                        <h3 class="h6 mt-3 mb-2">Using the command line client:</h3>
-                        <div class="bg-dark p-3 rounded mb-3">
-                            <code>python main.py "Your prompt here"</code>
-                        </div>
-                        
-                        <h3 class="h6 mt-3 mb-2">Using curl:</h3>
-                        <div class="bg-dark p-3 rounded mb-3">
-                            <code>curl -X POST http://localhost:5000/gemini -H "Content-Type: application/json" -d '{"prompt":"Your prompt here"}'</code>
-                        </div>
-                        
-                        <h3 class="h6 mt-3 mb-2">API Endpoint:</h3>
-                        <ul>
-                            <li><strong>URL:</strong> <code>/gemini</code></li>
-                            <li><strong>Method:</strong> POST</li>
-                            <li><strong>Request Body:</strong> JSON with a <code>prompt</code> field</li>
-                            <li><strong>Response:</strong> JSON with a <code>response</code> field containing Gemini's reply</li>
-                        </ul>
                     </div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- Loading spinner modal -->
-    <div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content bg-dark">
-                <div class="modal-body text-center p-4">
-                    <div class="spinner-border text-primary mb-3" role="status">
-                        <span class="visually-hidden">Loading...</span>
+            
+            <div class="col-md-9">
+                <div class="tool-container" id="gemini-tool">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">Gemini AI</h5>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="priority-switch">
+                                    <label class="form-check-label" for="priority-switch">High Priority</label>
+                                </div>
+                            </div>
+                            <div class="tool-description">Send a prompt to Gemini with intelligent model selection</div>
+                        </div>
+                        <div class="card-body">
+                            <form id="gemini-form">
+                                <div class="mb-3">
+                                    <label for="prompt" class="form-label">Prompt</label>
+                                    <textarea class="form-control" id="prompt" rows="4" placeholder="Enter your prompt here..."></textarea>
+                                </div>
+                                <div class="d-flex justify-content-between">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="verbose-check">
+                                        <label class="form-check-label" for="verbose-check">Verbose</label>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Submit</button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
-                    <p class="mb-0">Generating response...</p>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">Response</h5>
+                                <div id="model-used" class="small"></div>
+                            </div>
+                        </div>
+                        <div class="card-body result-container">
+                            <div class="loading text-center p-5">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Processing request...</p>
+                            </div>
+                            <div id="result" class="mt-2 mb-2"></div>
+                        </div>
+                    </div>
                 </div>
+
+                <div class="tool-container" id="web_search-tool" style="display: none;">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5 class="mb-0">Web Search</h5>
+                            <div class="tool-description">Search the web using DuckDuckGo</div>
+                        </div>
+                        <div class="card-body">
+                            <form id="web-search-form">
+                                <div class="mb-3">
+                                    <label for="search-query" class="form-label">Search Query</label>
+                                    <input type="text" class="form-control" id="search-query" placeholder="Enter your search query...">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="max-results" class="form-label">Max Results</label>
+                                    <input type="number" class="form-control" id="max-results" value="10" min="1" max="50">
+                                </div>
+                                <button type="submit" class="btn btn-primary">Search</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Search Results</h5>
+                        </div>
+                        <div class="card-body result-container">
+                            <div class="loading text-center p-5">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Searching...</p>
+                            </div>
+                            <div id="search-results" class="mt-2 mb-2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tool-container" id="wikipedia-tool" style="display: none;">
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <h5 class="mb-0">Wikipedia</h5>
+                            <div class="tool-description">Retrieve information from Wikipedia</div>
+                        </div>
+                        <div class="card-body">
+                            <form id="wikipedia-form">
+                                <div class="mb-3">
+                                    <label for="wiki-topic" class="form-label">Topic</label>
+                                    <input type="text" class="form-control" id="wiki-topic" placeholder="Enter a topic...">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="sentences" class="form-label">Number of Sentences</label>
+                                    <input type="number" class="form-control" id="sentences" value="5" min="1" max="20">
+                                </div>
+                                <button type="submit" class="btn btn-primary">Get Content</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">Wikipedia Content</h5>
+                        </div>
+                        <div class="card-body result-container">
+                            <div class="loading text-center p-5">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Fetching content...</p>
+                            </div>
+                            <div id="wiki-content" class="mt-2 mb-2"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- More tool containers would be added here -->
             </div>
         </div>
     </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const form = document.getElementById('prompt-form');
-            const promptInput = document.getElementById('prompt');
-            const submitBtn = document.getElementById('submit-btn');
-            const responseCard = document.getElementById('response-card');
-            const responseText = document.getElementById('response-text');
-            const copyBtn = document.getElementById('copy-btn');
-            const loadingModal = new bootstrap.Modal(document.getElementById('loadingModal'));
-            
-            form.addEventListener('submit', async function(e) {
-                e.preventDefault();
-                
-                const prompt = promptInput.value.trim();
-                if (!prompt) return;
-                
-                // Show loading indicator
-                loadingModal.show();
-                submitBtn.disabled = true;
-                
-                try {
-                    const response = await fetch('/gemini', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ prompt })
+            // Tool navigation
+            document.querySelectorAll('#tool-list a').forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    // Remove active class from all tools
+                    document.querySelectorAll('#tool-list a').forEach(i => {
+                        i.classList.remove('active');
+                    });
+                    // Add active class to clicked tool
+                    this.classList.add('active');
+                    
+                    // Hide all tool containers
+                    document.querySelectorAll('.tool-container').forEach(container => {
+                        container.style.display = 'none';
                     });
                     
-                    const data = await response.json();
+                    // Show selected tool container
+                    const toolName = this.getAttribute('data-tool');
+                    document.getElementById(toolName + '-tool').style.display = 'block';
+                });
+            });
+
+            // Gemini form submission
+            document.getElementById('gemini-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const prompt = document.getElementById('prompt').value.trim();
+                if (!prompt) return;
+                
+                const priority = document.getElementById('priority-switch').checked ? 'high' : 'low';
+                const verbose = document.getElementById('verbose-check').checked;
+                
+                // Show loading spinner
+                document.querySelector('#gemini-tool .loading').style.display = 'block';
+                document.getElementById('result').innerHTML = '';
+                document.getElementById('model-used').textContent = '';
+                
+                // Make API request
+                fetch('/gemini', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        prompt: prompt,
+                        priority: priority,
+                        verbose: verbose
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide loading spinner
+                    document.querySelector('#gemini-tool .loading').style.display = 'none';
                     
+                    // Display result
                     if (data.status === 'error') {
-                        responseText.innerHTML = `<div class="alert alert-danger mb-0">Error: ${data.error}</div>`;
+                        document.getElementById('result').innerHTML = `<div class="alert alert-danger">${data.response}</div>`;
                     } else {
-                        // Convert newlines to <br> tags and preserve whitespace
-                        const formattedResponse = data.response
-                            .replace(/\n/g, '<br>')
-                            .replace(/\s{2,}/g, match => '&nbsp;'.repeat(match.length));
-                        responseText.innerHTML = formattedResponse;
+                        const formattedText = data.response.replace(/\n/g, '<br>');
+                        document.getElementById('result').innerHTML = formattedText;
+                        
+                        // Show model used
+                        if (data.model_used) {
+                            document.getElementById('model-used').textContent = `Model: ${data.model_used.split('/').pop()}`;
+                        }
                     }
+                })
+                .catch(error => {
+                    // Hide loading spinner
+                    document.querySelector('#gemini-tool .loading').style.display = 'none';
+                    document.getElementById('result').innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                });
+            });
+
+            // Web search form submission
+            document.getElementById('web-search-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const query = document.getElementById('search-query').value.trim();
+                if (!query) return;
+                
+                const maxResults = document.getElementById('max-results').value;
+                
+                // Show loading spinner
+                document.querySelector('#web_search-tool .loading').style.display = 'block';
+                document.getElementById('search-results').innerHTML = '';
+                
+                // Make API request
+                fetch('/web_search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        max_results: parseInt(maxResults)
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide loading spinner
+                    document.querySelector('#web_search-tool .loading').style.display = 'none';
                     
-                    // Show the response card
-                    responseCard.classList.remove('d-none');
+                    // Display results
+                    if (data.error) {
+                        document.getElementById('search-results').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+                    } else if (data.results && data.results.length > 0) {
+                        let html = `<p>Found ${data.results.length} results for "${data.query}"</p>`;
+                        html += '<div class="list-group">';
+                        
+                        data.results.forEach(result => {
+                            html += `
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-1"><a href="${result.href}" target="_blank">${result.title}</a></h5>
+                                    </div>
+                                    <p class="mb-1">${result.body}</p>
+                                    <small class="text-muted">${result.href}</small>
+                                </div>
+                            `;
+                        });
+                        
+                        html += '</div>';
+                        document.getElementById('search-results').innerHTML = html;
+                    } else {
+                        document.getElementById('search-results').innerHTML = '<div class="alert alert-info">No results found.</div>';
+                    }
+                })
+                .catch(error => {
+                    // Hide loading spinner
+                    document.querySelector('#web_search-tool .loading').style.display = 'none';
+                    document.getElementById('search-results').innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                });
+            });
+
+            // Wikipedia form submission
+            document.getElementById('wikipedia-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const topic = document.getElementById('wiki-topic').value.trim();
+                if (!topic) return;
+                
+                const sentences = document.getElementById('sentences').value;
+                
+                // Show loading spinner
+                document.querySelector('#wikipedia-tool .loading').style.display = 'block';
+                document.getElementById('wiki-content').innerHTML = '';
+                
+                // Make API request
+                fetch('/wikipedia', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        topic: topic,
+                        sentences: parseInt(sentences)
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide loading spinner
+                    document.querySelector('#wikipedia-tool .loading').style.display = 'none';
                     
-                } catch (error) {
-                    console.error('Error:', error);
-                    responseText.innerHTML = `<div class="alert alert-danger mb-0">Error: ${error.message}</div>`;
-                    responseCard.classList.remove('d-none');
-                } finally {
-                    // Hide loading indicator
-                    loadingModal.hide();
-                    submitBtn.disabled = false;
-                }
+                    // Display content
+                    if (data.error) {
+                        document.getElementById('wiki-content').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+                    } else {
+                        const formattedText = data.content.replace(/\n/g, '<br>');
+                        document.getElementById('wiki-content').innerHTML = formattedText;
+                    }
+                })
+                .catch(error => {
+                    // Hide loading spinner
+                    document.querySelector('#wikipedia-tool .loading').style.display = 'none';
+                    document.getElementById('wiki-content').innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                });
             });
             
-            // Copy response to clipboard
-            copyBtn.addEventListener('click', function() {
-                const text = responseText.innerText;
-                navigator.clipboard.writeText(text).then(
-                    function() {
-                        const originalText = copyBtn.innerHTML;
-                        copyBtn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied!';
-                        setTimeout(() => {
-                            copyBtn.innerHTML = originalText;
-                        }, 2000);
-                    },
-                    function(err) {
-                        console.error('Could not copy text: ', err);
-                        copyBtn.textContent = 'Copy failed';
-                    }
-                );
+            // API Stats refresh
+            document.getElementById('refresh-stats').addEventListener('click', function() {
+                fetch('/stats')
+                    .then(response => response.json())
+                    .then(data => {
+                        let statsHtml = '<ul class="list-group">';
+                        for (const [key, count] of Object.entries(data)) {
+                            statsHtml += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                                Key ...${key}
+                                <span class="badge bg-primary rounded-pill">${count}</span>
+                            </li>`;
+                        }
+                        statsHtml += '</ul>';
+                        
+                        document.getElementById('stats-container').innerHTML = 
+                            Object.keys(data).length > 0 ? statsHtml : '<p>No stats available</p>';
+                    })
+                    .catch(error => {
+                        document.getElementById('stats-container').innerHTML = 
+                            `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                    });
             });
+            
+            // Initial stats load
+            document.getElementById('refresh-stats').click();
         });
     </script>
 </body>
