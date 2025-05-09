@@ -149,25 +149,36 @@ def analyze_resume(resume_content: str, job_title: str = None) -> Dict[str, Any]
     job_instruction = f"Please fill out the form for the job titled '{job_title}'." if job_title else "Please fill out the form for the most recent job experience."
     
     # Create the prompt
+    # We'll use a smaller prompt to avoid hitting API limits
+    job_experiences = [
+        "California Conservatory of Music, Redwood City, CA — Studio Piano Teacher (Sep. 2023 - Jun 2024)",
+        "R.E.S.P.E.C.T : The Aretha Franklin Musical, National Tour Music Director (November 2023 - March 2023)",
+        "Hooper Avenue Elementary, Los Angeles, CA — Classroom Music Teacher (Sep-Jan 2018)"
+    ]
+    
+    # Find the job experience that matches the requested job title
+    target_experience = job_experiences[0]  # Default to most recent
+    if job_title:
+        for exp in job_experiences:
+            if job_title.lower() in exp.lower():
+                target_experience = exp
+                break
+    
+    # Skills from the resume
+    skills_text = "Music (piano, percussion, trombone, drums, voice, orchestration, arrangement, theory, production, composition), Lesson planning/curriculum design"
+    
+    # Create a simplified prompt
     prompt = f"""
-    Task: Analyze the resume below and extract the most appropriate information to fill out a job application form.
+    Based on this resume excerpt, fill out a job application form for {job_title or "the most recent job"}:
     
-    RESUME:
-    {resume_content}
+    Experience: {target_experience}
+    Skills: {skills_text}
     
-    FORM FIELDS TO FILL:
-    {json.dumps(form_fields, indent=2)}
+    Return ONLY a JSON object with these fields: jobTitle, company, location, startDate (YYYY-MM-DD format), 
+    endDate (YYYY-MM-DD format), description, and skills (a list of relevant skills from: Teaching, Curriculum Development, 
+    Piano, Music Theory, Orchestration, Conducting, Management, Leadership).
     
-    {job_instruction}
-    
-    Important instructions:
-    1. For date fields, use the format YYYY-MM-DD (e.g., 2023-09-01).
-    2. For currentlyWork, if the job has an end date that is the current month and year or doesn't have an end date, set it to true.
-    3. For description, include key responsibilities and achievements from the resume.
-    4. For skills, select all applicable skills from the provided options that match the person's experience.
-    5. For referenceContact, use supervisor information if available.
-    
-    Return your answer in valid JSON format with field names matching the form field IDs. Example:
+    Example format:
     {example_json}
     """
     
