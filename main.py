@@ -341,6 +341,199 @@ def docs():
     """Render the documentation page."""
     return render_template('index.html')
 
+@app.route('/job_application')
+def job_application():
+    """Render the job application form page."""
+    return render_template('job_application.html')
+
+@app.route('/api/auto-fill-form', methods=['POST'])
+def auto_fill_form():
+    """
+    Auto-fill a job application form using AI analysis of a resume.
+    """
+    try:
+        data = request.get_json()
+        specific_job_title = data.get("jobTitle")
+        
+        # This is the resume content for testing - in a real application,
+        # this would be loaded from a user-uploaded file or a database
+        resume_content = """
+William White
+
+50 5th Ave
+San Francisco, CA
+(310) 867-5603
+billywhitemusic@gmail.com
+
+EXPERIENCE
+
+California Conservatory of Music, Redwood City, CA  — Studio Piano Teacher  (Sep. 2023 - Jun 2024)
+• Created and implemented individual piano curricula for students aged 6-17
+Supervisor: Chris Mallettinfo@thecaliforniaconservatory.com
+
+R.E.S.P.E.C.T : The Aretha Franklin Musical, National Tour Music Director (November 2023 - March 2023)
+Conducted 9 musicians, coordinated rehearsals, handled personnel and logistics issues, played keyboard 1, and created musical score for successful touring musical
+Supervisor: Jim Lanahan
+https://www.jimlanahan.com/contact
+
+Hooper Avenue Elementary, Los Angeles, CA — Classroom Music Teacher (Sep-Jan 2018)
+• Designed and implemented culturally-relevant curriculum focused primarily on Latin/Latin-American music for grades 3-5.  Received extremely positive feedback from students, teachers and parents
+Special Ed Teacher: Dorene Scala, dorene64@gmail.com; 5th Grade Teacher: Jose Perdomo, jap1474@lausd.net
+
+EDUCATION
+University of California, Los Angeles –  B.A., Ethnomusicology(2000-2005)
+San Francisco State University, San Francisco, CA - M.A. Composition(Jan 2020-ongoing)
+
+LANGUAGES
+English, French (fluent), Spanish (intermediate), Hebrew (intermediate), Japanese (beginner)
+
+SKILLS
+Music (piano, percussion, trombone, drums, voice, orchestration, arrangement, theory, production, composition)
+Lesson planning/curriculum design
+Technology (audio, signal processing, python, ML, AI)
+Soft skills: listening, making others feel heard and empowered
+
+AWARDS
+- Education Through Music Fellowship (2009)
+- UCLA Gluck Fellowship (2005)
+- Martin Feldman Award (2000-2005)
+- David A. Abell Jazz Award (2000-2005)
+- Duke Ellington Jazz Award (2000-2005)
+- CMEA Command Performance (1996-2000)
+- Honorarium – New Journey Baptist Church (2009) (as Music Minister)
+- Mensa Member, Los Angeles Chapter (2018)
+*Music credits listed separately
+        """
+        
+        # Define the form fields and options
+        form_fields = {
+            "jobTitle": {
+                "label": "Job Title",
+                "type": "text",
+                "id": "jobTitle",
+                "required": True
+            },
+            "company": {
+                "label": "Company",
+                "type": "text",
+                "id": "company",
+                "required": True
+            },
+            "location": {
+                "label": "Location",
+                "type": "text",
+                "id": "location",
+                "required": False
+            },
+            "startDate": {
+                "label": "Start Date",
+                "type": "date",
+                "id": "startDate",
+                "required": True
+            },
+            "endDate": {
+                "label": "End Date",
+                "type": "date",
+                "id": "endDate",
+                "required": False
+            },
+            "currentlyWork": {
+                "label": "I currently work here",
+                "type": "checkbox",
+                "id": "currentlyWork",
+                "required": False
+            },
+            "description": {
+                "label": "Description",
+                "type": "textarea",
+                "id": "description",
+                "required": True
+            },
+            "skills": {
+                "label": "Skills used",
+                "type": "multi-select",
+                "id": "skills",
+                "required": False,
+                "options": ["Teaching", "Curriculum Development", "Piano", "Music Theory", 
+                           "Orchestration", "Conducting", "Management", "Leadership"]
+            },
+            "referenceContact": {
+                "label": "Reference Contact Information",
+                "type": "text",
+                "id": "referenceContact",
+                "required": False
+            }
+        }
+        
+        # Create a prompt for the AI system
+        prompt = f"""
+        Task: Analyze the resume below and extract the most appropriate information to fill out a job application form.
+        
+        RESUME:
+        {resume_content}
+        
+        FORM FIELDS TO FILL:
+        {json.dumps(form_fields, indent=2)}
+        
+        {"Please fill out the form for the job titled '" + specific_job_title + "'." if specific_job_title else "Please fill out the form for the most recent job experience."}
+        
+        Important instructions:
+        1. For date fields, use the format YYYY-MM-DD (e.g., 2023-09-01).
+        2. For currentlyWork, if the job has an end date that is the current month and year or doesn't have an end date, set it to true.
+        3. For description, include key responsibilities and achievements from the resume.
+        4. For skills, select all applicable skills from the provided options that match the person's experience.
+        5. For referenceContact, use supervisor information if available.
+        
+        Return your answer in valid JSON format with field names matching the form field IDs. Example:
+        {
+          "jobTitle": "Studio Piano Teacher",
+          "company": "California Conservatory of Music",
+          "location": "Redwood City, CA",
+          "startDate": "2023-09-01",
+          "endDate": "2024-06-30",
+          "currentlyWork": false,
+          "description": "Created and implemented individual piano curricula for students aged 6-17.",
+          "skills": ["Teaching", "Piano", "Curriculum Development", "Music Theory"],
+          "referenceContact": "Chris Mallett, info@thecaliforniaconservatory.com"
+        }
+        """
+        
+        # Call the Gemini API to analyze the resume and fill the form
+        result = call_gemini_with_model_selection(prompt, "high", True)
+        
+        if result["status"] == "success":
+            response_text = result["response"]
+            
+            # Try to extract JSON from the response text
+            try:
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    form_data = json.loads(json_match.group(0))
+                else:
+                    # If we can't find JSON pattern, try parsing the whole response
+                    form_data = json.loads(response_text)
+                
+                # Add model information for logging/tracking
+                form_data["_model_used"] = result["model_used"]
+                
+                return jsonify(form_data)
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing JSON from response: {e}")
+                logger.debug(f"Response text: {response_text}")
+                return jsonify({
+                    "error": "Failed to parse form data from AI response",
+                    "_model_used": result["model_used"],
+                    "_raw_response": response_text
+                }), 500
+        else:
+            return jsonify({"error": result["response"]}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in auto-fill form endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 # Helper Functions for Web Search and Content
 
 def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
