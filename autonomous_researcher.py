@@ -287,50 +287,83 @@ class AutonomousResearcher:
     
     def _assess_progress(self) -> Tuple[bool, str]:
         """
-        Assess research progress and determine if it's complete.
+        Assess research progress to determine if it's complete using an intuitive approach.
+        
+        This method evaluates whether the gathered information is sufficient to answer
+        the original query, considering diminishing returns and information completeness
+        rather than arbitrary metrics.
         
         Returns:
             Tuple of (is_complete, reason)
         """
-        # Simple checks first
+        # Safety checks first
         if self.research_state["iterations"] >= self.max_iterations:
             return True, "Reached maximum iterations"
         
         if not self.research_state["findings"]:
             return False, "No findings yet"
+            
+        # Calculate coverage of different categories/aspects
+        if not self.research_state["categories"]:
+            self._categorize_findings()
+            
+        # Prepare a summary of what we've learned
+        found_venues = []
+        venue_types = []
         
-        # Use Gemini to assess progress
-        state_summary = json.dumps({
-            "query": self.research_state["query"],
-            "iterations": self.research_state["iterations"],
-            "search_terms_used": self.research_state["searched_terms"],
-            "urls_visited": len(self.research_state["visited_urls"]),
-            "findings_count": len(self.research_state["findings"]),
-            "categories": list(self.research_state["categories"].keys())
-        })
+        # Extract venue names and types from findings
+        for finding in self.research_state["findings"]:
+            new_info = finding.get("new_information", "")
+            entities = finding.get("entities", [])
+            
+            # Look for venue names in entities
+            for entity in entities:
+                if any(keyword in entity.lower() for keyword in ["hall", "club", "lounge", "bar", "venue"]):
+                    if entity not in found_venues:
+                        found_venues.append(entity)
+                        
+            # Look for venue types/categories
+            for entity in entities:
+                if any(keyword in entity.lower() for keyword in ["jazz", "piano bar", "concert hall", "club"]):
+                    if entity not in venue_types and not any(entity in vt for vt in venue_types):
+                        venue_types.append(entity)
         
+        # Prepare findings summary with what we know about piano venues
+        findings_summary = self._summarize_findings(3)
+        
+        # Use Gemini to make an intuitive assessment
         prompt = f"""
-        Assess whether the following research progress is sufficient to answer the original query.
+        You are a researcher studying music venues in San Francisco with pianos. 
+        Assess whether our research progress so far is sufficient to give a helpful answer.
         
         ORIGINAL QUERY: {self.research_state["query"]}
         
-        RESEARCH PROGRESS:
-        {state_summary}
+        RESEARCH CONTEXT:
+        - We have investigated {len(self.research_state["visited_urls"])} sources
+        - We have found information about approximately {len(found_venues)} venues
+        - We have identified these types of venues: {", ".join(venue_types) if venue_types else "None yet"}
+        - We've completed {self.research_state["iterations"]} research iterations
         
-        FINDINGS SUMMARY:
-        {self._summarize_findings(3)}
+        KEY FINDINGS SO FAR:
+        {findings_summary}
         
-        Consider:
-        1. Do we have enough information to provide a useful answer?
-        2. Are there major gaps in our knowledge?
-        3. Would additional research likely yield substantially new information?
+        Make a judgment similar to how a human would decide when they have "researched enough":
+        
+        1. Do we have enough information to provide a useful answer to someone asking about piano venues in SF?
+        2. Would additional searching likely yield substantially new information, or mostly just confirm what we know?
+        3. Do we have a reasonable diversity of venue types (piano bars, jazz clubs, concert halls, etc.)?
+        4. Is our information specific enough to be helpful to someone looking for venues with pianos?
+        
+        Don't use rigid metrics - use your judgment about whether we've reached a point of diminishing returns.
         
         Respond with a JSON object:
         {{
             "is_complete": true/false,
-            "reasoning": "explanation of your assessment",
-            "gaps": ["list any significant gaps"],
-            "next_steps": ["recommended next steps if not complete"]
+            "reasoning": "Your intuitive assessment of completeness",
+            "information_value": 0-10 (how valuable/complete our current information is),
+            "diminishing_returns": 0-10 (how likely further research is to yield new insights),
+            "venue_diversity": 0-10 (how well we've covered different types of venues),
+            "next_direction": "If continuing, what specific aspect should we research next"
         }}
         """
         
@@ -338,8 +371,10 @@ class AutonomousResearcher:
         assessment = {
             "is_complete": False,
             "reasoning": "Default assessment - continue research",
-            "gaps": ["No specific gaps identified yet"],
-            "next_steps": ["Continue with research plan"]
+            "information_value": 3,
+            "diminishing_returns": 2,
+            "venue_diversity": 2,
+            "next_direction": "Gather basic information about different venue types"
         }
         
         if "response" in result:
@@ -350,19 +385,41 @@ class AutonomousResearcher:
                     assessment = json.loads(json_match.group(0))
             except Exception as e:
                 logger.error(f"Error extracting assessment JSON: {e}")
+                # Use text response as reasoning if JSON parsing fails
+                if "response" in result:
+                    assessment["reasoning"] = result["response"]
         
+        # Make the final determination based on the intuitive assessment
         is_complete = assessment.get("is_complete", False)
+        
+        # Also consider our own heuristics for completeness
+        info_value = int(assessment.get("information_value", 0))
+        diminishing = int(assessment.get("diminishing_returns", 0))
+        diversity = int(assessment.get("venue_diversity", 0))
+        
+        # Alternative completion check: good information value + diminishing returns
+        if not is_complete and info_value >= 7 and diminishing >= 6:
+            is_complete = True
+            assessment["reasoning"] += " (System determined: Good information value with diminishing returns)"
+        
+        # Alternative completion check: enough iterations with moderate information
+        if not is_complete and self.research_state["iterations"] >= 5 and info_value >= 5:
+            is_complete = True
+            assessment["reasoning"] += " (System determined: Sufficient iterations with adequate information)"
+        
         reason = assessment.get("reasoning", "No reasoning provided")
         
         if is_complete:
             logger.info(f"Research assessed as complete: {reason}")
+            logger.info(f"Final scores - Value: {info_value}/10, Diminishing Returns: {diminishing}/10, Diversity: {diversity}/10")
         else:
-            gaps = ", ".join(assessment.get("gaps", ["None specified"]))
-            logger.info(f"Research continuing. Gaps: {gaps}")
+            next_direction = assessment.get("next_direction", "No specific direction provided")
+            logger.info(f"Research continuing. Next focus: {next_direction}")
+            logger.info(f"Current scores - Value: {info_value}/10, Diminishing Returns: {diminishing}/10, Diversity: {diversity}/10")
         
         return is_complete, reason
     
-    def _summarize_findings(self, max_per_category: int = None) -> str:
+    def _summarize_findings(self, max_per_category: Optional[int] = None) -> str:
         """
         Summarize findings, optionally limiting items per category.
         
@@ -571,7 +628,12 @@ class AutonomousResearcher:
     
     def _execute_research_step(self) -> bool:
         """
-        Execute a single research step based on current state.
+        Execute a single research step based on current state with adaptive strategy.
+        
+        This method intelligently decides what to research next based on:
+        1. What we've already learned
+        2. What gaps remain in our understanding
+        3. What search strategies have been most effective so far
         
         Returns:
             True if research should continue, False if complete
@@ -581,59 +643,115 @@ class AutonomousResearcher:
         
         logger.info(f"Starting research iteration {iteration}")
         
-        # 1. If no search terms yet, generate them
-        if not self.research_state["searched_terms"]:
+        # PHASE 1: INITIAL DISCOVERY (Iteration 1)
+        if iteration == 1:
+            logger.info("PHASE 1: Initial discovery")
             search_terms = self._generate_search_terms(self.research_state["query"])
             
-            # Use the first search term
+            # Use the first search term for broad exploration
             if search_terms:
                 current_term = search_terms[0]
+                logger.info(f"Using initial search term: {current_term}")
                 search_results = self._web_search(current_term)
                 
                 # Select URLs to visit
                 urls_to_visit = self._select_urls_to_visit(search_results)
                 
                 # Visit the URLs and gather content
+                successful_scrapes = 0
                 for url in urls_to_visit:
                     content = self._scrape_url(url)
                     if content:
+                        successful_scrapes += 1
                         analysis = self._analyze_content(content, self.research_state["query"])
                         self.research_state["findings"].append(analysis)
                 
-            return True
+                # If we didn't get any content, try an alternative search term immediately
+                if successful_scrapes == 0 and len(search_terms) > 1:
+                    logger.info("Initial search yielded no usable content, trying alternative term")
+                    alt_term = search_terms[1]
+                    logger.info(f"Using alternative search term: {alt_term}")
+                    search_results = self._web_search(alt_term)
+                    
+                    urls_to_visit = self._select_urls_to_visit(search_results)
+                    for url in urls_to_visit:
+                        content = self._scrape_url(url)
+                        if content:
+                            analysis = self._analyze_content(content, self.research_state["query"])
+                            self.research_state["findings"].append(analysis)
+        
+        # PHASE 2: CATEGORY EXPLORATION (Iterations 2-3)
+        elif iteration <= 3:
+            logger.info("PHASE 2: Category exploration")
             
-        # 2. If we have searched but need more information
-        elif iteration < len(self.research_state["searched_terms"]) + 3:
-            # Try a different search term if available
-            if iteration - 1 < len(self._generate_search_terms(self.research_state["query"])):
+            # First, identify venue categories from what we know
+            venue_types = []
+            for finding in self.research_state["findings"]:
+                entities = finding.get("entities", [])
+                for entity in entities:
+                    if any(keyword in entity.lower() for keyword in ["jazz", "piano bar", "concert", "symphony", "club"]):
+                        if entity not in venue_types:
+                            venue_types.append(entity)
+            
+            # If we have venue types, search for specific types
+            if venue_types and iteration - 2 < len(venue_types):
+                venue_type = venue_types[iteration - 2]
+                search_term = f"San Francisco {venue_type} piano"
+                logger.info(f"Exploring venue category: {venue_type}")
+                
+                search_results = self._web_search(search_term)
+                urls_to_visit = self._select_urls_to_visit(search_results)
+                
+                # Visit the URLs and gather content
+                for url in urls_to_visit:
+                    content = self._scrape_url(url)
+                    if content:
+                        analysis = self._analyze_content(content, search_term)
+                        self.research_state["findings"].append(analysis)
+            else:
+                # No specific venue types found yet, use a general search term
                 search_terms = self._generate_search_terms(self.research_state["query"])
-                current_term = search_terms[iteration - 1]
+                if len(search_terms) > iteration - 1:
+                    current_term = search_terms[iteration - 1]
+                    logger.info(f"Using general search term: {current_term}")
+                    
+                    search_results = self._web_search(current_term)
+                    urls_to_visit = self._select_urls_to_visit(search_results)
+                    
+                    # Visit the URLs and gather content
+                    for url in urls_to_visit:
+                        content = self._scrape_url(url)
+                        if content:
+                            analysis = self._analyze_content(content, self.research_state["query"])
+                            self.research_state["findings"].append(analysis)
+        
+        # PHASE 3: TARGETED RESEARCH (Iterations 4+)
+        else:
+            logger.info("PHASE 3: Targeted research based on gaps")
+            
+            # First, ensure we have categories
+            if not self.research_state["categories"]:
+                self._categorize_findings()
                 
-                # Check if we've already used this term
-                if current_term in self.research_state["searched_terms"]:
-                    current_term = f"{current_term} additional information"
+            # Determine what aspect needs more research
+            assessment = self._get_research_direction()
+            next_direction = assessment.get("next_direction", "")
+            
+            if next_direction:
+                logger.info(f"Targeted research focus: {next_direction}")
+                search_term = f"San Francisco piano venues {next_direction}"
                 
-                search_results = self._web_search(current_term)
-                
-                # Select URLs to visit
+                search_results = self._web_search(search_term)
                 urls_to_visit = self._select_urls_to_visit(search_results)
                 
                 # Visit the URLs and gather content
                 for url in urls_to_visit:
                     content = self._scrape_url(url)
                     if content:
-                        analysis = self._analyze_content(content, self.research_state["query"])
+                        analysis = self._analyze_content(content, search_term)
                         self.research_state["findings"].append(analysis)
-            
-            # Generate specialized search based on current findings if needed
-            elif self.research_state["findings"]:
-                # Identify what we need more information about
-                categories = list(self.research_state["categories"].keys()) if self.research_state["categories"] else []
-                if not categories and self.research_state["findings"]:
-                    self._categorize_findings()
-                    categories = list(self.research_state["categories"].keys())
-                
-                # Focus on areas with less information
+            else:
+                # Fallback: find the least-covered category
                 least_covered = None
                 min_items = float('inf')
                 
@@ -643,20 +761,20 @@ class AutonomousResearcher:
                         least_covered = category
                 
                 if least_covered:
-                    specialized_term = f"{self.research_state['query']} {least_covered}"
-                    search_results = self._web_search(specialized_term)
+                    logger.info(f"Researching least covered category: {least_covered}")
+                    search_term = f"San Francisco piano venues {least_covered}"
                     
-                    # Select URLs to visit
+                    search_results = self._web_search(search_term)
                     urls_to_visit = self._select_urls_to_visit(search_results)
                     
                     # Visit the URLs and gather content
                     for url in urls_to_visit:
                         content = self._scrape_url(url)
                         if content:
-                            analysis = self._analyze_content(content, specialized_term)
+                            analysis = self._analyze_content(content, search_term)
                             self.research_state["findings"].append(analysis)
         
-        # 3. Assess if we have enough information
+        # After each iteration, check if we've gathered enough information
         is_complete, reason = self._assess_progress()
         
         # If complete or reached max iterations, stop
@@ -666,6 +784,85 @@ class AutonomousResearcher:
             return False
         
         return True
+        
+    def _get_research_direction(self) -> Dict[str, Any]:
+        """
+        Determine the best direction for further research based on current findings.
+        
+        Returns:
+            Dictionary with recommended research direction
+        """
+        # Prepare a summary of what we've learned
+        found_venues = []
+        venue_types = []
+        
+        # Extract venue names and types from findings
+        for finding in self.research_state["findings"]:
+            entities = finding.get("entities", [])
+            
+            # Look for venue names and types
+            for entity in entities:
+                if any(keyword in entity.lower() for keyword in ["hall", "club", "lounge", "bar", "venue"]):
+                    if entity not in found_venues:
+                        found_venues.append(entity)
+                        
+                if any(keyword in entity.lower() for keyword in ["jazz", "piano bar", "concert hall", "club"]):
+                    if entity not in venue_types and not any(entity in vt for vt in venue_types):
+                        venue_types.append(entity)
+        
+        # Prepare a prompt asking for research direction
+        prompt = f"""
+        You are a research director guiding a study on music venues in San Francisco with pianos.
+        Based on what we've learned so far, suggest what specific aspect we should focus on next.
+        
+        ORIGINAL QUERY: {self.research_state["query"]}
+        
+        RESEARCH STATUS:
+        - We have investigated {len(self.research_state["visited_urls"])} sources
+        - We have found information about approximately {len(found_venues)} venues
+        - We have identified these types of venues: {", ".join(venue_types) if venue_types else "None yet"}
+        - We've completed {self.research_state["iterations"]} research iterations
+        
+        CURRENT FINDINGS BY CATEGORY:
+        {self._summarize_findings()}
+        
+        Considering our current progress, what specific aspect of San Francisco piano venues
+        should we research next to get the most valuable new information?
+        
+        Format your response as a JSON object:
+        {{
+            "next_direction": "specific focus area to research next",
+            "reason": "why this direction will yield valuable information",
+            "suggested_search_terms": ["term1", "term2"]
+        }}
+        """
+        
+        result = self._call_gemini(prompt, "low")
+        direction = {
+            "next_direction": "",
+            "reason": "No specific direction determined",
+            "suggested_search_terms": []
+        }
+        
+        if "response" in result:
+            # Extract JSON from response
+            try:
+                json_match = re.search(r'\{[\s\S]*\}', result["response"])
+                if json_match:
+                    direction = json.loads(json_match.group(0))
+            except Exception as e:
+                logger.error(f"Error extracting research direction JSON: {e}")
+                # Use text response if JSON parsing fails
+                if "response" in result:
+                    direction["reason"] = result["response"]
+                    # Try to extract a direction from the text
+                    lines = result["response"].split('\n')
+                    for line in lines:
+                        if "should" in line.lower() and "research" in line.lower():
+                            direction["next_direction"] = line
+                            break
+        
+        return direction
     
     def research(self, query: str) -> Dict[str, Any]:
         """
