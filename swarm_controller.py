@@ -19,6 +19,8 @@ import queue
 import logging
 import json
 import requests
+import importlib
+import subprocess
 from enum import Enum
 from typing import Dict, List, Any, Optional, Union, Callable
 
@@ -52,6 +54,7 @@ class TaskType(Enum):
     READ_FILE = "read_file"    # Read a file
     WRITE_FILE = "write_file"  # Write to a file
     EXECUTE = "execute"        # Execute a command
+    INSTALL_PACKAGE = "install_package"  # Install a Python package
 
 class Task:
     """Represents a task to be processed by an agent in the swarm."""
@@ -259,6 +262,8 @@ class SwarmController:
                 self._handle_write_file_task(task)
             elif task.task_type == TaskType.EXECUTE:
                 self._handle_execute_task(task)
+            elif task.task_type == TaskType.INSTALL_PACKAGE:
+                self._handle_install_package_task(task)
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
         except Exception as e:
@@ -268,32 +273,73 @@ class SwarmController:
     def _handle_prompt_task(self, task: Task, priority: TaskPriority):
         """Handle a simple prompt to Gemini."""
         prompt = task.data.get("prompt", "")
+        verbose = task.data.get("verbose", True)  # Default to verbose mode
+        
         if not prompt:
+            logger.error("Empty prompt provided to _handle_prompt_task")
             task.mark_completed(error="Empty prompt")
             return
         
+        # Log the thinking process
+        if verbose:
+            logger.info(f"🧠 THINKING: Analyzing prompt complexity and selecting appropriate model...")
+            logger.info(f"🧠 PROMPT: '{prompt[:100]}...' (truncated)")
+            logger.info(f"🧠 PRIORITY: {priority.value}")
+        
         # Choose proxy based on priority
         proxy_url = self.extended_proxy_url if priority == TaskPriority.HIGH else self.main_proxy_url
+        
+        if verbose:
+            model_type = "LARGE (complex reasoning)" if priority == TaskPriority.HIGH else "SMALL (faster response)"
+            logger.info(f"🧠 MODEL SELECTION: Using {model_type} model for this task")
+            logger.info(f"🧠 ENDPOINT: Routing to {proxy_url}")
         
         # Add priority parameter for the extended proxy
         if proxy_url == self.extended_proxy_url:
             # Call extended proxy with priority parameter
             try:
+                if verbose:
+                    logger.info(f"🧠 ACTION: Sending prompt to extended proxy with priority={priority.value}")
+                
                 response = requests.post(
                     proxy_url,
-                    json={"prompt": prompt, "priority": priority.value}
+                    json={"prompt": prompt, "priority": priority.value, "verbose": verbose}
                 )
                 response.raise_for_status()
                 result = response.json()
+                
+                if verbose:
+                    logger.info(f"🧠 RESPONSE: Successfully received response from extended proxy")
+                    model_used = result.get("model_used", "unknown")
+                    logger.info(f"🧠 MODEL USED: {model_used}")
+                    
+                    # Show a snippet of the response
+                    response_text = result.get("response", "")
+                    if response_text:
+                        preview = response_text[:100] + "..." if len(response_text) > 100 else response_text
+                        logger.info(f"🧠 RESPONSE PREVIEW: {preview}")
+                
                 task.mark_completed(result=result)
             except Exception as e:
+                logger.error(f"ERROR in extended proxy call: {str(e)}", exc_info=True)
                 task.mark_completed(error=f"Error calling extended proxy: {str(e)}")
         else:
             # Call main proxy
             try:
+                if verbose:
+                    logger.info(f"🧠 ACTION: Sending prompt to main proxy")
+                
                 result = call_gemini(proxy_url, prompt)
+                
+                if verbose:
+                    logger.info(f"🧠 RESPONSE: Successfully received response from main proxy")
+                    # Show a snippet of the response
+                    preview = result[:100] + "..." if len(result) > 100 else result
+                    logger.info(f"🧠 RESPONSE PREVIEW: {preview}")
+                
                 task.mark_completed(result={"response": result})
             except Exception as e:
+                logger.error(f"ERROR in main proxy call: {str(e)}", exc_info=True)
                 task.mark_completed(error=f"Error calling Gemini: {str(e)}")
     
     def _handle_code_fix_task(self, task: Task):
@@ -388,20 +434,109 @@ class SwarmController:
     def _handle_execute_task(self, task: Task):
         """Handle an execute command task."""
         cmd = task.data.get("cmd", "")
+        verbose = task.data.get("verbose", True)
         
         if not cmd:
             task.mark_completed(error="Missing command")
             return
         
+        if verbose:
+            logger.info(f"🧠 EXECUTING: Running shell command: {cmd}")
+            
         try:
             returncode, stdout, stderr = run_command(cmd)
+            
+            if verbose:
+                logger.info(f"🧠 EXECUTION COMPLETE: Command returned code {returncode}")
+                if stdout:
+                    logger.info(f"🧠 STDOUT: {stdout[:200]}..." if len(stdout) > 200 else f"🧠 STDOUT: {stdout}")
+                if stderr:
+                    logger.info(f"🧠 STDERR: {stderr[:200]}..." if len(stderr) > 200 else f"🧠 STDERR: {stderr}")
+                    
             task.mark_completed(result={
                 "returncode": returncode,
                 "stdout": stdout,
                 "stderr": stderr
             })
         except Exception as e:
+            logger.error(f"Error executing command: {str(e)}", exc_info=True)
             task.mark_completed(error=f"Error executing command: {str(e)}")
+            
+    def _handle_install_package_task(self, task: Task):
+        """Handle a Python package installation task."""
+        package_name = task.data.get("package_name", "")
+        version = task.data.get("version", "")
+        upgrade = task.data.get("upgrade", False)
+        verbose = task.data.get("verbose", True)
+        
+        if not package_name:
+            task.mark_completed(error="Missing package name")
+            return
+        
+        if verbose:
+            logger.info(f"🧠 PACKAGE INSTALLATION: Preparing to install {package_name}" + 
+                       (f" version {version}" if version else "") +
+                       (" with upgrade" if upgrade else ""))
+        
+        try:
+            # Build pip install command
+            cmd = [sys.executable, "-m", "pip", "install"]
+            
+            if upgrade:
+                cmd.append("--upgrade")
+                
+            if version:
+                cmd.append(f"{package_name}=={version}")
+            else:
+                cmd.append(package_name)
+                
+            if verbose:
+                logger.info(f"🧠 EXECUTING: {' '.join(cmd)}")
+                
+            # Run pip command
+            process = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if process.returncode == 0:
+                if verbose:
+                    logger.info(f"🧠 SUCCESS: Package {package_name} installed successfully")
+                    
+                # Try to import the newly installed package
+                try:
+                    # Convert from package_name to module_name (e.g., "package-name" to "package_name")
+                    module_name = package_name.replace("-", "_")
+                    importlib.import_module(module_name)
+                    if verbose:
+                        logger.info(f"🧠 VERIFICATION: Successfully imported {module_name}")
+                except ImportError as ie:
+                    if verbose:
+                        logger.warning(f"🧠 NOTICE: Package installed but import failed: {str(ie)}")
+                        logger.info("🧠 HINT: Package may use a different module name than the package name")
+                        
+                task.mark_completed(result={
+                    "success": True,
+                    "package": package_name,
+                    "stdout": process.stdout,
+                    "stderr": process.stderr
+                })
+            else:
+                if verbose:
+                    logger.error(f"🧠 ERROR: Failed to install {package_name}")
+                    logger.error(f"🧠 PIP OUTPUT: {process.stderr}")
+                    
+                task.mark_completed(result={
+                    "success": False,
+                    "package": package_name,
+                    "stdout": process.stdout,
+                    "stderr": process.stderr
+                })
+        except Exception as e:
+            logger.exception(f"Error installing package {package_name}: {str(e)}")
+            task.mark_completed(error=f"Error installing package: {str(e)}")
 
 def task_callback(response: Dict[str, Any]):
     """Example callback function to handle task completion."""

@@ -57,21 +57,44 @@ def call_gemini():
         prompt = data.get('prompt', '')
         # Priority: 'low' for simple, 'high' for complex reasoning
         priority = data.get('priority', 'low')
+        verbose = data.get('verbose', True)  # Default to verbose output
         
         if not prompt:
             logger.error("No prompt provided in request")
             return jsonify({'error': 'Missing prompt', 'status': 'error'}), 400
+        
+        # Log thoughts and actions if verbose mode is enabled
+        if verbose:
+            logger.info("="*50)
+            logger.info(f"🧠 EXTENDED PROXY: Starting task processing")
+            logger.info(f"🧠 PROMPT ANALYSIS: Evaluating a {len(prompt)} character prompt")
+            logger.info(f"🧠 TASK PRIORITY: {priority.upper()}")
+            logger.info("-"*50)
             
         api_key = next(key_iter)
-        logger.info(f"Using API key: {api_key[:5]}... with priority {priority}")
-        
+        if verbose:
+            logger.info(f"🧠 KEY SELECTION: Chose API key: {api_key[:5]}*** for this request")
+            
         # Import and use our helper functions
         from ai_helper import configure_genai, get_model, generate_content, get_response_text
+        
+        if verbose:
+            logger.info(f"🧠 CONFIGURATION: Initializing AI client with selected API key")
+            
         configure_genai(api_key)
         
-        # Choose model based on priority
+        # Choose model based on priority with verbose explanation
         model_name = LARGE_MODEL if priority == 'high' else SMALL_MODEL
-        logger.info(f"Selected model: {model_name} for {priority} priority task")
+        
+        if verbose:
+            if priority == 'high':
+                logger.info(f"🧠 MODEL SELECTION: Chose {model_name} (advanced model)")
+                logger.info(f"🧠 REASONING: Complex task requires deeper reasoning capabilities")
+            else:
+                logger.info(f"🧠 MODEL SELECTION: Chose {model_name} (efficient model)")
+                logger.info(f"🧠 REASONING: Simple task prioritizes speed and efficiency")
+                
+            logger.info(f"🧠 STRATEGY: Loading model and preparing generation parameters")
         
         model = get_model(model_name)
         
@@ -84,6 +107,9 @@ def call_gemini():
                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
+            
+            if verbose:
+                logger.info(f"🧠 SAFETY: Using new-style safety settings with HarmCategory")
         except ImportError:
             safety_settings = {
                 "HARASSMENT": "BLOCK_NONE",
@@ -92,13 +118,24 @@ def call_gemini():
                 "DANGEROUS": "BLOCK_NONE",
             }
             
-        # Generation configuration
+            if verbose:
+                logger.info(f"🧠 SAFETY: Using legacy-style safety settings with string keys")
+            
+        # Generation configuration with verbose details
         gen_config = {
             "temperature": 0.7,
             "max_output_tokens": 8192,
             "top_p": 0.95,
             "top_k": 40,
         }
+        
+        if verbose:
+            logger.info(f"🧠 PARAMETERS: temperature={gen_config['temperature']}, max_tokens={gen_config['max_output_tokens']}")
+            logger.info(f"🧠 EXECUTION: Sending prompt to model for generation...")
+            logger.info("-"*50)
+        
+        # Time the execution
+        start_time = time.time()
         
         response = generate_content(
             model,
@@ -107,18 +144,30 @@ def call_gemini():
             generation_config=gen_config
         )
         
+        # Calculate response time
+        elapsed_time = time.time() - start_time
+        
         response_text = get_response_text(response)
-        logger.info(f"Successfully processed request with model {model_name}")
-        logger.debug(f"Response text: {response_text[:100]}...")
+        
+        if verbose:
+            logger.info(f"🧠 COMPLETION: Generation completed in {elapsed_time:.2f} seconds")
+            logger.info(f"🧠 RESPONSE SIZE: Generated {len(response_text)} characters")
+            
+            # Show a summary/snippet of the response
+            preview = response_text[:100] + "..." if len(response_text) > 100 else response_text
+            logger.info(f"🧠 RESPONSE PREVIEW: {preview}")
+            logger.info("="*50)
         
         return jsonify({
             'response': response_text, 
             'model_used': model_name,
             'status': 'success',
-            'priority': priority
+            'priority': priority,
+            'generation_time': elapsed_time
         })
     except Exception as e:
-        logger.error(f"Error in call_gemini: {str(e)}")
+        logger.error(f"❌ ERROR in call_gemini: {str(e)}")
+        logger.exception("Detailed error information:")
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
 # --- Web Search endpoint ---
