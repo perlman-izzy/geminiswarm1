@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-Script to run the extended proxy server on port 3000.
+Workflow script to start the extended proxy server.
 """
 import os
 import sys
+import signal
 import logging
 import subprocess
-from config import LOG_DIR
 
 # Configure logging
-os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.join(LOG_DIR, "run_extended_proxy.log"))
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("run_extended_proxy")
+logger = logging.getLogger("extended_proxy")
+
+def signal_handler(sig, frame):
+    """Handle signals gracefully."""
+    logger.info("Shutting down extended proxy server...")
+    sys.exit(0)
 
 def main():
-    """Run the extended proxy server."""
+    """Start the extended proxy server."""
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     logger.info("Starting extended proxy server on port 3000")
     
-    # Command to run the server
+    # Command to start the server
     cmd = [
         "gunicorn",
         "--bind", "0.0.0.0:3000",
