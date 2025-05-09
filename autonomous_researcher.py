@@ -233,22 +233,29 @@ class AutonomousResearcher:
         """
         
         result = self._call_gemini(prompt, "low")
-        if "response" in result:
-            # Extract JSON from response
-            try:
-                json_match = re.search(r'\{[\s\S]*\}', result["response"])
-                if json_match:
-                    return json.loads(json_match.group(0))
-            except Exception as e:
-                logger.error(f"Error extracting JSON from analysis: {e}")
-        
-        # Return empty structure if we couldn't parse
-        return {
+        analysis_result = {
             "key_facts": [],
             "entities": [],
             "numerical_data": [],
             "new_information": ""
         }
+        
+        if "response" in result:
+            # Extract JSON from response
+            try:
+                json_match = re.search(r'\{[\s\S]*\}', result["response"])
+                if json_match:
+                    analysis_result = json.loads(json_match.group(0))
+            except Exception as e:
+                logger.error(f"Error extracting JSON from analysis: {e}")
+        
+        # Add which model was used to the analysis result
+        if "model_used" in result:
+            analysis_result["model_used"] = result["model_used"]
+        else:
+            analysis_result["model_used"] = "unknown"
+            
+        return analysis_result
     
     def _create_research_plan(self, query: str) -> List[str]:
         """
@@ -1037,6 +1044,19 @@ class AutonomousResearcher:
                 "json": json_path,
                 "text": text_path
             }
+        
+        # Add research trace with model usage information for analysis
+        research_trace = []
+        for i, finding in enumerate(self.research_state["findings"]):
+            # Record which model was used for this finding
+            if "model_used" in finding:
+                research_trace.append({
+                    "step": i + 1,
+                    "type": "content_analysis",
+                    "model_used": finding.get("model_used", "unknown")
+                })
+        
+        results["research_trace"] = research_trace
         
         logger.info(f"Research complete after {self.research_state['iterations']} iterations")
         return results
