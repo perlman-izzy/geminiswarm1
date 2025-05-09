@@ -864,12 +864,82 @@ class AutonomousResearcher:
         
         return direction
     
-    def research(self, query: str) -> Dict[str, Any]:
+    def save_results(self, results: Dict[str, Any], query: str, output_dir: str = "research_results") -> Tuple[str, str]:
+        """
+        Save research results to files in JSON and readable text formats.
+        
+        Args:
+            results: Research results dictionary
+            query: The original query
+            output_dir: Directory to save results
+            
+        Returns:
+            Tuple of (json_path, text_path)
+        """
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Create safe filename from query
+        safe_filename = re.sub(r'[^\w\s-]', '', query).strip().lower()
+        safe_filename = re.sub(r'[-\s]+', '-', safe_filename)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        base_filename = f"{safe_filename}-{timestamp}"
+        
+        # Save JSON file
+        json_path = os.path.join(output_dir, f"{base_filename}.json")
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2)
+        
+        # Save text file with readable format
+        text_path = os.path.join(output_dir, f"{base_filename}.txt")
+        with open(text_path, 'w', encoding='utf-8') as f:
+            # Write header
+            f.write("="*80 + "\n")
+            f.write(f"Research Results: {query}\n")
+            f.write("="*80 + "\n\n")
+            
+            # Write main answer
+            f.write("ANSWER:\n")
+            f.write(results.get("answer", "No answer generated") + "\n\n")
+            
+            # Write categories
+            f.write("FINDINGS BY CATEGORY:\n")
+            for category, items in results.get("categories", {}).items():
+                f.write(f"\n{category.upper()}:\n")
+                for i, item in enumerate(items, 1):
+                    f.write(f"  {i}. {item}\n")
+            
+            # Write limitations
+            if "limitations" in results and results["limitations"]:
+                f.write("\nLIMITATIONS:\n")
+                for limitation in results["limitations"]:
+                    f.write(f"- {limitation}\n")
+            
+            # Write sources
+            if "sources" in results and results["sources"]:
+                f.write("\nSOURCES:\n")
+                for source in results["sources"]:
+                    f.write(f"- {source}\n")
+            
+            # Write research metadata
+            if "research_metadata" in results:
+                f.write("\nRESEARCH METADATA:\n")
+                metadata = results["research_metadata"]
+                f.write(f"- Iterations: {metadata.get('iterations', 0)}\n")
+                f.write(f"- Search terms used: {metadata.get('search_terms_used', 0)}\n")
+                f.write(f"- URLs visited: {metadata.get('urls_visited', 0)}\n")
+        
+        logger.info(f"Research results saved to {json_path} and {text_path}")
+        return json_path, text_path
+    
+    def research(self, query: str, save_results_to_file: bool = True, output_dir: str = "research_results") -> Dict[str, Any]:
         """
         Conduct research on the given query.
         
         Args:
             query: Research query
+            save_results_to_file: Whether to save results to files
+            output_dir: Directory to save results if save_results_to_file is True
             
         Returns:
             Dictionary with research results
@@ -902,6 +972,15 @@ class AutonomousResearcher:
         
         # Synthesize the results
         results = self._synthesize_results()
+        
+        # Save results to files if requested
+        if save_results_to_file:
+            json_path, text_path = self.save_results(results, query, output_dir)
+            # Add file paths to results
+            results["result_files"] = {
+                "json": json_path,
+                "text": text_path
+            }
         
         logger.info(f"Research complete after {self.research_state['iterations']} iterations")
         return results
