@@ -516,6 +516,8 @@ def call_gemini_with_model_selection(
     Returns:
         Response from Gemini API
     """
+    # Ensure we always return a dictionary, even in error cases
+    result = {"response": "", "model_used": "none", "status": "error"}
     # Choose model based on priority
     # For high priority/complex tasks, use a more powerful model
     if priority.lower() == "high":
