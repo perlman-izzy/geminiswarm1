@@ -321,17 +321,24 @@ def run_demo():
     
     print("\nVENUES FOUND:")
     for venue in results.get("venues", []):
-        print(f"\n- {venue['name']}")
-        for detail in venue.get("details", []):
-            print(f"  * {detail}")
+        if isinstance(venue, dict) and "name" in venue:
+            print(f"\n- {venue['name']}")
+            details = venue.get("details", [])
+            if isinstance(details, list):
+                for detail in details:
+                    print(f"  * {detail}")
     
     print("\nKEY FACTS:")
-    for fact in results.get("facts", []):
-        print(f"- {fact}")
+    facts = results.get("facts", [])
+    if isinstance(facts, list):
+        for fact in facts:
+            print(f"- {fact}")
     
     print("\nLIMITATIONS:")
-    for limitation in results.get("limitations", []):
-        print(f"- {limitation}")
+    limitations = results.get("limitations", [])
+    if isinstance(limitations, list):
+        for limitation in limitations:
+            print(f"- {limitation}")
     
     print("\nRESEARCH METADATA:")
     metadata = results.get("research_metadata", {})
