@@ -98,7 +98,7 @@ def get_trending_topics(region: str = 'US') -> List[str]:
         logger.error(f"Error getting trending topics: {e}")
         return []
 
-def fetch_news(topic: str = None, feed_url: str = None, max_items: int = 10) -> List[Dict[str, str]]:
+def fetch_news(topic: Optional[str] = None, feed_url: Optional[str] = None, max_items: int = 10) -> List[Dict[str, str]]:
     """
     Fetch news from RSS feeds.
     
@@ -111,11 +111,12 @@ def fetch_news(topic: str = None, feed_url: str = None, max_items: int = 10) -> 
         List of news items
     """
     try:
-        if feed_url is None:
-            # Default to a general news feed
-            feed_url = "http://rss.cnn.com/rss/cnn_topstories.rss"
+        # Default to a general news feed if none provided
+        actual_feed_url = "http://rss.cnn.com/rss/cnn_topstories.rss"
+        if feed_url is not None:
+            actual_feed_url = feed_url
         
-        feed = feedparser.parse(feed_url)
+        feed = feedparser.parse(actual_feed_url)
         items = []
         
         for entry in feed.entries[:max_items]:
@@ -126,7 +127,10 @@ def fetch_news(topic: str = None, feed_url: str = None, max_items: int = 10) -> 
                 "summary": entry.get("summary", "")
             }
             
-            if topic is None or topic.lower() in item["title"].lower() or topic.lower() in item["summary"].lower():
+            # If no topic filter or topic is found in title/summary
+            if topic is None or (isinstance(topic, str) and 
+                                (topic.lower() in item["title"].lower() or 
+                                 topic.lower() in item["summary"].lower())):
                 items.append(item)
                 
         return items
@@ -237,24 +241,26 @@ def analyze_sentiment(text: str) -> Dict[str, Any]:
     """
     try:
         blob = TextBlob(text)
-        sentiment = blob.sentiment
+        # Get polarity and subjectivity values
+        polarity = blob.sentiment.polarity if hasattr(blob.sentiment, 'polarity') else 0.0
+        subjectivity = blob.sentiment.subjectivity if hasattr(blob.sentiment, 'subjectivity') else 0.0
         
         # Determine sentiment label
-        if sentiment.polarity > 0.1:
+        if polarity > 0.1:
             label = "Positive"
-        elif sentiment.polarity < -0.1:
+        elif polarity < -0.1:
             label = "Negative"
         else:
             label = "Neutral"
         
         return {
             "sentiment": label,
-            "polarity": sentiment.polarity,
-            "subjectivity": sentiment.subjectivity
+            "polarity": float(polarity),
+            "subjectivity": float(subjectivity)
         }
     except Exception as e:
         logger.error(f"Error analyzing sentiment: {e}")
-        return {"error": str(e)}
+        return {"error": str(e), "sentiment": "Unknown", "polarity": 0.0, "subjectivity": 0.0}
 
 def extract_keywords(text: str, num_keywords: int = 10) -> List[str]:
     """

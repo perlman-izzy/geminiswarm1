@@ -1,82 +1,65 @@
+#!/usr/bin/env python3
+"""
+Configuration module for the Multi-Agent Gemini AI system.
+Loads environment variables and sets up system paths.
+"""
 import os
+import sys
 from dotenv import load_dotenv
+from typing import List
 
-# Load environment variables from a .env file
+# Load environment variables from .env file if present
 load_dotenv()
 
-# Google Gemini API settings
-API_KEYS = [
-    # Fresh API keys provided by the user
-    "AIzaSyCcqC_3qZjfunJmEVDwH25cYiT6EoyVCqA",
-    "AIzaSyAqsSH2B0ZrFrBqcs7QJZle6hFlx9O3zC4",
-    "AIzaSyDcf_j8sk-gQK_z3QRupDOBxSQbzGPPwbs",
-    "AIzaSyAF66TFgv2o_BNNNXTt4IPNz38Zf0CcfR4",
-    "AIzaSyBPizTLUOcA_Gx27aeQ9E0KSKgAePNfERM",
-    "AIzaSyDn4whqPnQVnLCeqE42lWwdRoDahTC_9vc",
-    "AIzaSyB5nL_8t7sOpfnRaEs0-FldlqXoFCkEcbA",
-    "AIzaSyC6wrXb9L4yJTqFo21HjTwTgnlNPl-m4pU",
-    "AIzaSyB7hWAfS1EoH3pdXGHP6DVQkJsGqhlW1k8",
-    "AIzaSyCxjnfVbSr2xTkyEqll_p9CH-QrlToBV8g",
-    "AIzaSyDQ7_nCuQ4G8bDRUm9zF630qKrzpWzNA74",
-    "AIzaSyDiIEjcIu2BiLdx-p5c_tNdi80cq1awn6w",
-    # Environment variable keys
-    os.environ.get("GEMINI_API_KEY"),
-    os.environ.get("GOOGLE_API_KEY1"),
-    os.environ.get("GOOGLE_API_KEY2"),
-    os.environ.get("GOOGLE_API_KEY3"),
+# Directory paths
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(ROOT_DIR, "logs")
+PROMPTS_DIR = os.path.join(ROOT_DIR, "prompts")
+STATIC_DIR = os.path.join(ROOT_DIR, "static")
+TEMPLATES_DIR = os.path.join(ROOT_DIR, "templates")
+
+# Ensure logs directory exists
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Collect API keys from environment variables
+API_KEYS: List[str] = [
+    os.environ.get("GOOGLE_API_KEY1", ""),
+    os.environ.get("GOOGLE_API_KEY2", ""),
+    os.environ.get("GOOGLE_API_KEY3", ""),
+    os.environ.get("GEMINI_API_KEY", "")
 ]
 
-# Remove any None or empty values from API_KEYS
-API_KEYS = [key for key in API_KEYS if key]
+# API Endpoints
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# Gemini model configuration
-DEFAULT_MODELS = [
-    "models/gemini-1.5-flash",      # Faster, lower quality
-    "models/gemini-1.5-pro",        # Higher quality, slower
-    "models/gemini-pro-vision",     # Fallback older model
-]
-
-# Server configurations
-MAIN_PROXY_PORT = 5000
-EXTENDED_PROXY_PORT = 3000
-
-# Safety settings configuration
-try:
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
-    # Set up safety settings with the new API format
-    SAFETY_SETTINGS = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-except ImportError:
-    # Fallback for older versions of the SDK
-    SAFETY_SETTINGS = {
-        "HARASSMENT": "BLOCK_NONE",
-        "HATE": "BLOCK_NONE",
-        "SEXUAL": "BLOCK_NONE",
-        "DANGEROUS": "BLOCK_NONE",
-    }
-
-# Generation configuration
-GENERATION_CONFIG = {
-    "temperature": 0.7,
-    "max_output_tokens": 8192,  # Increased for more detailed responses
-    "top_p": 0.95,
-    "top_k": 40,
+# Model names
+GEMINI_MODELS = {
+    "pro": "models/gemini-1.5-pro",
+    "flash": "models/gemini-1.5-flash",
+    "ultra": "models/gemini-1.5-pro-latest",  # May not be available in all regions
+    "fallback": "models/gemini-1.0-pro"
 }
 
-# Swarm configuration
-MAX_WORKERS = 4
-MAX_ATTEMPTS = 3
-DEFAULT_TEST_CMD = "python -m unittest discover"
-WORKER_COUNT = 4  # Number of parallel workers to use
-PROXY_URL = "http://localhost:5000/gemini"  # Default URL for the Gemini proxy
+# Port configurations
+DEFAULT_PORT = 5000
+EXTENDED_PORT = 3000
 
-# Logging configuration
-LOG_LEVEL = "DEBUG"
-LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Other configuration options
+MAX_RETRIES = 3
+DEFAULT_TIMEOUT = 30
+MAX_TOKENS = 8192
+TEMPERATURE = 0.7
 
-# File paths
-LOG_DIR = "logs"
+# Debug mode
+DEBUG = os.environ.get("DEBUG", "False").lower() in ["true", "1", "yes"]
+
+# Add repository root to Python path to allow imports from anywhere
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
+# Print configuration status
+if __name__ == "__main__":
+    print(f"ROOT_DIR: {ROOT_DIR}")
+    print(f"LOG_DIR: {LOG_DIR}")
+    print(f"API Keys available: {len([k for k in API_KEYS if k])}")
+    print(f"Debug mode: {DEBUG}")
