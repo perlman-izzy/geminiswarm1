@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini AI Proxy</title>
+    <link rel="stylesheet" href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="card border-0 shadow mb-4">
+                    <div class="card-header bg-transparent border-bottom-0">
+                        <h1 class="card-title mb-0">
+                            <i class="bi bi-chat-dots-fill text-primary me-2"></i>
+                            Gemini AI Proxy
+                        </h1>
+                    </div>
+                    <div class="card-body">
+                        <p class="lead">
+                            This is a proxy server for Google's Gemini AI that uses API key rotation to distribute load.
+                        </p>
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle-fill me-2"></i>
+                            Use this interface to test the Gemini AI service or use the command-line client for automated workflows.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow">
+                    <div class="card-header bg-transparent">
+                        <h2 class="card-title h5 mb-0">Send a prompt to Gemini</h2>
+                    </div>
+                    <div class="card-body">
+                        <form id="prompt-form">
+                            <div class="mb-3">
+                                <label for="prompt" class="form-label">Your prompt:</label>
+                                <textarea class="form-control" id="prompt" rows="4" placeholder="Enter your prompt here..." required></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="submit-btn">
+                                <i class="bi bi-send me-2"></i>Submit
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow mt-4 d-none" id="response-card">
+                    <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                        <h2 class="card-title h5 mb-0">Response</h2>
+                        <button class="btn btn-sm btn-outline-secondary" id="copy-btn">
+                            <i class="bi bi-clipboard me-1"></i>Copy
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="response-container bg-dark p-3 rounded" id="response-text">
+                            <!-- Response will be displayed here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card border-0 shadow mt-4">
+                    <div class="card-header bg-transparent">
+                        <h2 class="card-title h5 mb-0">API Usage</h2>
+                    </div>
+                    <div class="card-body">
+                        <p>You can also interact with this proxy using the command line client or by sending POST requests directly to the API:</p>
+                        
+                        <h3 class="h6 mt-3 mb-2">Using the command line client:</h3>
+                        <div class="bg-dark p-3 rounded mb-3">
+                            <code>python main.py "Your prompt here"</code>
+                        </div>
+                        
+                        <h3 class="h6 mt-3 mb-2">Using curl:</h3>
+                        <div class="bg-dark p-3 rounded mb-3">
+                            <code>curl -X POST http://localhost:5000/gemini -H "Content-Type: application/json" -d '{"prompt":"Your prompt here"}'</code>
+                        </div>
+                        
+                        <h3 class="h6 mt-3 mb-2">API Endpoint:</h3>
+                        <ul>
+                            <li><strong>URL:</strong> <code>/gemini</code></li>
+                            <li><strong>Method:</strong> POST</li>
+                            <li><strong>Request Body:</strong> JSON with a <code>prompt</code> field</li>
+                            <li><strong>Response:</strong> JSON with a <code>response</code> field containing Gemini's reply</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading spinner modal -->
+    <div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark">
+                <div class="modal-body text-center p-4">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mb-0">Generating response...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('prompt-form');
+            const promptInput = document.getElementById('prompt');
+            const submitBtn = document.getElementById('submit-btn');
+            const responseCard = document.getElementById('response-card');
+            const responseText = document.getElementById('response-text');
+            const copyBtn = document.getElementById('copy-btn');
+            const loadingModal = new bootstrap.Modal(document.getElementById('loadingModal'));
+            
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const prompt = promptInput.value.trim();
+                if (!prompt) return;
+                
+                // Show loading indicator
+                loadingModal.show();
+                submitBtn.disabled = true;
+                
+                try {
+                    const response = await fetch('/gemini', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ prompt })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.status === 'error') {
+                        responseText.innerHTML = `<div class="alert alert-danger mb-0">Error: ${data.error}</div>`;
+                    } else {
+                        // Convert newlines to <br> tags and preserve whitespace
+                        const formattedResponse = data.response
+                            .replace(/\n/g, '<br>')
+                            .replace(/\s{2,}/g, match => '&nbsp;'.repeat(match.length));
+                        responseText.innerHTML = formattedResponse;
+                    }
+                    
+                    // Show the response card
+                    responseCard.classList.remove('d-none');
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    responseText.innerHTML = `<div class="alert alert-danger mb-0">Error: ${error.message}</div>`;
+                    responseCard.classList.remove('d-none');
+                } finally {
+                    // Hide loading indicator
+                    loadingModal.hide();
+                    submitBtn.disabled = false;
+                }
+            });
+            
+            // Copy response to clipboard
+            copyBtn.addEventListener('click', function() {
+                const text = responseText.innerText;
+                navigator.clipboard.writeText(text).then(
+                    function() {
+                        const originalText = copyBtn.innerHTML;
+                        copyBtn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied!';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = originalText;
+                        }, 2000);
+                    },
+                    function(err) {
+                        console.error('Could not copy text: ', err);
+                        copyBtn.textContent = 'Copy failed';
+                    }
+                );
+            });
+        });
+    </script>
+</body>
+</html>

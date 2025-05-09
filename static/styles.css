@@ -1,0 +1,65 @@
+/* Additional custom styles */
+.response-container {
+    min-height: 100px;
+    max-height: 500px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: monospace;
+}
+
+.card {
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+/* Improve the appearance of code blocks */
+code {
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+/* Ensure that the min height of the textarea is sufficient */
+#prompt {
+    min-height: 100px;
+}
+
+/* Style for the copy button to make it more visible */
+#copy-btn:hover {
+    background-color: var(--bs-primary);
+    border-color: var(--bs-primary);
+}
+
+/* Add a small animation to the submit button */
+#submit-btn {
+    transition: all 0.2s ease;
+}
+
+#submit-btn:hover {
+    transform: translateY(-2px);
+}
+
+/* Custom scrollbar for the response container */
+.response-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.response-container::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+.response-container::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+}
+
+.response-container::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.4);
+}
