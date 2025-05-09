@@ -466,26 +466,7 @@ AWARDS
         }
         
         # Create a prompt for the AI system
-        prompt = f"""
-        Task: Analyze the resume below and extract the most appropriate information to fill out a job application form.
-        
-        RESUME:
-        {resume_content}
-        
-        FORM FIELDS TO FILL:
-        {json.dumps(form_fields, indent=2)}
-        
-        {"Please fill out the form for the job titled '" + specific_job_title + "'." if specific_job_title else "Please fill out the form for the most recent job experience."}
-        
-        Important instructions:
-        1. For date fields, use the format YYYY-MM-DD (e.g., 2023-09-01).
-        2. For currentlyWork, if the job has an end date that is the current month and year or doesn't have an end date, set it to true.
-        3. For description, include key responsibilities and achievements from the resume.
-        4. For skills, select all applicable skills from the provided options that match the person's experience.
-        5. For referenceContact, use supervisor information if available.
-        
-        Return your answer in valid JSON format with field names matching the form field IDs. Example:
-        {
+        example_json = '''{
           "jobTitle": "Studio Piano Teacher",
           "company": "California Conservatory of Music",
           "location": "Redwood City, CA",
@@ -495,7 +476,30 @@ AWARDS
           "description": "Created and implemented individual piano curricula for students aged 6-17.",
           "skills": ["Teaching", "Piano", "Curriculum Development", "Music Theory"],
           "referenceContact": "Chris Mallett, info@thecaliforniaconservatory.com"
-        }
+        }'''
+        
+        job_instruction = "Please fill out the form for the job titled '" + str(specific_job_title) + "'." if specific_job_title else "Please fill out the form for the most recent job experience."
+        
+        prompt = f"""
+        Task: Analyze the resume below and extract the most appropriate information to fill out a job application form.
+        
+        RESUME:
+        {resume_content}
+        
+        FORM FIELDS TO FILL:
+        {json.dumps(form_fields, indent=2)}
+        
+        {job_instruction}
+        
+        Important instructions:
+        1. For date fields, use the format YYYY-MM-DD (e.g., 2023-09-01).
+        2. For currentlyWork, if the job has an end date that is the current month and year or doesn't have an end date, set it to true.
+        3. For description, include key responsibilities and achievements from the resume.
+        4. For skills, select all applicable skills from the provided options that match the person's experience.
+        5. For referenceContact, use supervisor information if available.
+        
+        Return your answer in valid JSON format with field names matching the form field IDs. Example:
+        {example_json}
         """
         
         # Call the Gemini API to analyze the resume and fill the form
