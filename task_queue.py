@@ -1,6 +1,5 @@
 """Task queue implementation for the Gemini Swarm Debugger."""
-import threading
-from collections import deque
+import queue
 from typing import Optional, Any
 
 
@@ -8,9 +7,8 @@ class TaskQueue:
     """A thread-safe queue implementation for distributing tasks to worker threads."""
     
     def __init__(self):
-        """Initialize an empty task queue with a lock for thread safety."""
-        self.queue = deque()
-        self.lock = threading.Lock()
+        """Initialize an empty task queue with a thread-safe Queue implementation."""
+        self._queue = queue.Queue()
     
     def push(self, item: Any) -> None:
         """Add an item to the end of the queue.
@@ -18,19 +16,15 @@ class TaskQueue:
         Args:
             item: The item to add to the queue.
         """
-        with self.lock:
-            self.queue.append(item)
+        self._queue.put(item)
     
     def pop(self) -> Optional[Any]:
         """Remove and return the next item from the queue.
         
         Returns:
-            The next item in the queue, or None if the queue is empty.
+            The next item in the queue, or blocks until an item is available.
         """
-        with self.lock:
-            if not self.queue:
-                return None
-            return self.queue.popleft()
+        return self._queue.get()
     
     def size(self) -> int:
         """Get the current size of the queue.
@@ -38,8 +32,7 @@ class TaskQueue:
         Returns:
             The number of items in the queue.
         """
-        with self.lock:
-            return len(self.queue)
+        return self._queue.qsize()
     
     def is_empty(self) -> bool:
         """Check if the queue is empty.
@@ -47,5 +40,4 @@ class TaskQueue:
         Returns:
             True if the queue is empty, False otherwise.
         """
-        with self.lock:
-            return len(self.queue) == 0
+        return self._queue.empty()

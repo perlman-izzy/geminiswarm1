@@ -1,0 +1,144 @@
+# flask_proxy_extended.py
+from flask import Flask, request, jsonify
+import google.generativeai as genai
+import itertools
+import os
+import shutil
+import subprocess
+import requests
+from bs4 import BeautifulSoup
+from duckduckgo_search import ddg
+
+app = Flask(__name__)
+
+# Rotate through Gemini API keys
+API_KEYS = [
+    "cwV8AcSbpNvcvrMwhDTArKjQsk",
+    "AIzaSyBcwbIZPq3yqVonOG-8AqPSaUuv6vzQWyRE",
+    "AIzaSyDln6sUGiaidN5CmKDGw3qt1spvgz94QKo",
+    "AIzaSyDozMeIBRZrvGYSt8Ffua3rGp4DlDnONEo",
+    "AIzaSyBAvBbhU71l63Ei25F-eHb0QMKjuotDPIg",
+    "AIzaSyCre8WOWbchKsT7l67V7aIsMGneIEOa59s",
+    "AIzaSyCV3OauLHIpUHV722MszP2JTir_tkC1ECM",
+    "AIzaSyCvKDI8jyoWDYGIaolxsi5A95MPxR2EDKQ",
+    "AIzaSyAeONfijWy8EPJqAY3B0DJedepcGyYRrWU",
+]
+key_iter = itertools.cycle(API_KEYS)
+
+# --- Gemini endpoint ---
+@app.route('/gemini', methods=['POST'])
+def call_gemini():
+    data = request.get_json() or {}
+    prompt = data.get('prompt', '')
+    if not prompt:
+        return jsonify({'error': 'Missing prompt'}), 400
+    api_key = next(key_iter)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-pro')
+    response = model.generate_content(prompt)
+    return jsonify({'response': response.text})
+
+# --- Web Search endpoint ---
+@app.route('/search', methods=['POST'])
+def web_search():
+    data = request.get_json() or {}
+    query = data.get('query', '')
+    if not query:
+        return jsonify({'error': 'Missing query'}), 400
+    try:
+        results = ddg(query, max_results=20)
+        return jsonify({'results': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- HTTP GET / Scrape endpoint ---
+@app.route('/fetch_url', methods=['POST'])
+def fetch_url():
+    data = request.get_json() or {}
+    url = data.get('url', '')
+    if not url:
+        return jsonify({'error': 'Missing url'}), 400
+    try:
+        resp = requests.get(url, timeout=10)
+        return jsonify({'status_code': resp.status_code, 'text': resp.text})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- Text Scraping endpoint ---
+@app.route('/scrape_text', methods=['POST'])
+def scrape_text():
+    data = request.get_json() or {}
+    url = data.get('url', '')
+    selector = data.get('selector', None)
+    if not url:
+        return jsonify({'error': 'Missing url'}), 400
+    try:
+        resp = requests.get(url, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        if selector:
+            elements = soup.select(selector)
+            text = '\n'.join([el.get_text() for el in elements])
+        else:
+            text = soup.get_text()
+        return jsonify({'text': text})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# --- File System Endpoints ---
+@app.route('/list_files', methods=['GET'])
+def list_files():
+    path = request.args.get('path', '.')
+    files = []
+    for root, dirs, fs in os.walk(path):
+        for f in fs:
+            files.append(os.path.join(root, f))
+    return jsonify({'files': files})
+
+@app.route('/read_file', methods=['POST'])
+def read_file():
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    if not path or not os.path.isfile(path):
+        return jsonify({'error': 'Invalid path'}), 400
+    with open(path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    return jsonify({'content': content})
+
+@app.route('/write_file', methods=['POST'])
+def write_file():
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    content = data.get('content', None)
+    if not path or content is None:
+        return jsonify({'error': 'Missing path or content'}), 400
+    bak = path + '.bak'
+    try:
+        shutil.copy2(path, bak)
+    except Exception:
+        pass
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return jsonify({'status': 'ok'})
+
+# --- Execute script endpoint ---
+@app.route('/exec', methods=['POST'])
+def execute_script():
+    data = request.get_json() or {}
+    cmd = data.get('cmd', '')
+    cwd = data.get('cwd', None)
+    timeout = data.get('timeout', 60)
+    if not cmd:
+        return jsonify({'error': 'Missing cmd'}), 400
+    cmd_list = cmd.split() if isinstance(cmd, str) else cmd
+    try:
+        proc = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return jsonify({
+            'returncode': proc.returncode,
+            'stdout': proc.stdout,
+            'stderr': proc.stderr
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000)

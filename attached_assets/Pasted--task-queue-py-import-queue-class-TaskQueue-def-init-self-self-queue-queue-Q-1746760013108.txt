@@ -1,0 +1,136 @@
+# task_queue.py
+import queue
+
+class TaskQueue:
+    def __init__(self):
+        self._queue = queue.Queue()
+
+    def push(self, task):
+        """Push a task dict or value onto the queue."""
+        self._queue.put(task)
+
+    def pop(self):
+        """Retrieve the next task. Blocks if empty."""
+        return self._queue.get()
+
+# file_agent.py
+import os
+import shutil
+
+def read_file(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def backup_file(path):
+    bak = path + '.bak'
+    shutil.copy2(path, bak)
+    return bak
+
+def write_file(path, content):
+    backup_file(path)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+# runner.py
+import subprocess
+
+def run_command(cmd, cwd=None, timeout=60):
+    """
+    Execute a command (string or list), capture stdout/stderr.
+    Returns (returncode, stdout, stderr).
+    """
+    cmd_list = cmd.split() if isinstance(cmd, str) else cmd
+    proc = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    return proc.returncode, proc.stdout, proc.stderr
+
+# gemini_client.py
+import requests
+
+
+def call_gemini(proxy_url, prompt):
+    """
+    Send a prompt to the Gemini Flask proxy and return the response text.
+    """
+    resp = requests.post(f"{proxy_url}/gemini", json={"prompt": prompt})
+    resp.raise_for_status()
+    return resp.json().get("response", "")
+
+
+def web_search(proxy_url, query, max_results=20):
+    """
+    Perform a web search via the proxy and return search result list.
+    """
+    payload = {"query": query, "max_results": max_results}
+    resp = requests.post(f"{proxy_url}/search", json=payload)
+    resp.raise_for_status()
+    return resp.json().get("results", [])
+
+
+def fetch_url(proxy_url, url):
+    """
+    Fetch raw text or HTML from a URL via the proxy.
+    """
+    resp = requests.post(f"{proxy_url}/fetch_url", json={"url": url})
+    resp.raise_for_status()
+    data = resp.json()
+    if 'text' in data:
+        return data['text']
+    raise Exception(f"Error fetching URL: {data.get('error')}")
+
+
+def scrape_text(proxy_url, url, selector=None):
+    """
+    Scrape text content from a URL, optionally filtered by CSS selector.
+    """
+    payload = {"url": url}
+    if selector:
+        payload["selector"] = selector
+    resp = requests.post(f"{proxy_url}/scrape_text", json=payload)
+    resp.raise_for_status()
+    return resp.json().get("text", "")
+
+# loop_controller.py
+import sys
+from file_agent import read_file, write_file
+from runner import run_command
+from gemini_client import call_gemini
+from logger import setup_logger
+from config import LOG_DIR
+
+logger = setup_logger("loop_controller", log_dir=LOG_DIR)
+
+def fix_file_loop(path, proxy_url, test_cmd, max_attempts=3):
+    """
+    Loop: read code, run test, if fail propose fix, write, retry.
+    """
+    for attempt in range(1, max_attempts + 1):
+        logger.info(f"Attempt {attempt}/{max_attempts} for {path}")
+        code = read_file(path)
+        ret, out, err = run_command(test_cmd)
+        if ret == 0:
+            logger.info("Tests passed. No fix needed.")
+            return True
+        logger.error(f"Error on attempt {attempt}: {err}")
+        fix = call_gemini(proxy_url, code + "\nError:\n" + err)
+        if not fix.strip():
+            logger.warning("No fix proposed. Stopping.")
+            return False
+        try:
+            write_file(path, fix)
+            logger.info(f"Applied fix to {path}")
+        except Exception as e:
+            logger.error(f"Failed to write file {path}: {e}")
+            return False
+    logger.error("Reached max attempts without passing tests.")
+    return False
+
+if __name__ == '__main__':
+    if len(sys.argv) < 4:
+        logger.error("Usage: python loop_controller.py <script.py> <proxy_url> <test_cmd> [max_attempts]")
+        sys.exit(1)
+    script = sys.argv[1]
+    proxy = sys.argv[2].rstrip('/')
+    test = sys.argv[3]
+    attempts = int(sys.argv[4]) if len(sys.argv) > 4 else 3
+    success = fix_file_loop(script, proxy, test, attempts)
+    sys.exit(0 if success else 1)

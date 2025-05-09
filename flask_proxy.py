@@ -2,8 +2,12 @@ import os
 import logging
 import itertools
 import time
+import shutil
+import subprocess
 from flask import Flask, request, jsonify, render_template
 import google.generativeai as genai
+import requests
+from bs4 import BeautifulSoup
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -173,6 +177,159 @@ def get_stats():
         "total_keys": len(API_KEYS),
         "key_stats": anonymized_stats
     })
+
+
+# --- Web Search endpoint ---
+@app.route('/search', methods=['POST'])
+def web_search():
+    data = request.get_json() or {}
+    query = data.get('query', '')
+    if not query:
+        return jsonify({'error': 'Missing query'}), 400
+    try:
+        # Simple search implementation using requests
+        search_url = f"https://duckduckgo.com/html/?q={query}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        resp = requests.get(search_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        results = []
+        
+        for result in soup.select('.result'):
+            title_el = result.select_one('.result__title')
+            url_el = result.select_one('.result__url')
+            snippet_el = result.select_one('.result__snippet')
+            
+            title = title_el.get_text() if title_el else ""
+            url = url_el.get_text() if url_el else ""
+            snippet = snippet_el.get_text() if snippet_el else ""
+            
+            if title and url:
+                results.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet
+                })
+                
+        return jsonify({'results': results})
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# --- HTTP GET / Scrape endpoint ---
+@app.route('/fetch_url', methods=['POST'])
+def fetch_url():
+    data = request.get_json() or {}
+    url = data.get('url', '')
+    if not url:
+        return jsonify({'error': 'Missing url'}), 400
+    try:
+        resp = requests.get(url, timeout=10)
+        return jsonify({'status_code': resp.status_code, 'text': resp.text})
+    except Exception as e:
+        logger.error(f"Fetch URL error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Text Scraping endpoint ---
+@app.route('/scrape_text', methods=['POST'])
+def scrape_text():
+    data = request.get_json() or {}
+    url = data.get('url', '')
+    selector = data.get('selector', None)
+    if not url:
+        return jsonify({'error': 'Missing url'}), 400
+    try:
+        resp = requests.get(url, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        if selector:
+            elements = soup.select(selector)
+            text = '\n'.join([el.get_text() for el in elements])
+        else:
+            text = soup.get_text()
+        return jsonify({'text': text})
+    except Exception as e:
+        logger.error(f"Scrape text error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# --- File System Endpoints ---
+@app.route('/list_files', methods=['GET'])
+def list_files():
+    path = request.args.get('path', '.')
+    files = []
+    for root, dirs, fs in os.walk(path):
+        for f in fs:
+            files.append(os.path.join(root, f))
+    return jsonify({'files': files})
+
+
+@app.route('/read_file', methods=['POST'])
+def read_file():
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    if not path or not os.path.isfile(path):
+        return jsonify({'error': 'Invalid path'}), 400
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return jsonify({'content': content})
+    except Exception as e:
+        logger.error(f"Read file error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/write_file', methods=['POST'])
+def write_file():
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    content = data.get('content', None)
+    if not path or content is None:
+        return jsonify({'error': 'Missing path or content'}), 400
+    
+    # Create a backup if the file exists
+    bak = path + '.bak'
+    try:
+        if os.path.exists(path):
+            shutil.copy2(path, bak)
+    except Exception as e:
+        logger.warning(f"Failed to create backup of {path}: {str(e)}")
+    
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        logger.error(f"Write file error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Execute script endpoint ---
+@app.route('/exec', methods=['POST'])
+def execute_script():
+    data = request.get_json() or {}
+    cmd = data.get('cmd', '')
+    cwd = data.get('cwd', None)
+    timeout = data.get('timeout', 60)
+    if not cmd:
+        return jsonify({'error': 'Missing cmd'}), 400
+    
+    cmd_list = cmd.split() if isinstance(cmd, str) else cmd
+    try:
+        proc = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return jsonify({
+            'returncode': proc.returncode,
+            'stdout': proc.stdout,
+            'stderr': proc.stderr
+        })
+    except subprocess.TimeoutExpired:
+        logger.error(f"Command timed out after {timeout}s: {cmd}")
+        return jsonify({'error': f"Command timed out after {timeout}s"}), 500
+    except Exception as e:
+        logger.error(f"Execute script error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == "__main__":

@@ -1,0 +1,60 @@
+# swarm.py
+import argparse
+import threading
+from task_queue import TaskQueue
+from loop_controller import fix_file_loop
+from logger import setup_logger
+from config import PROXY_URL, WORKER_COUNT
+
+logger = setup_logger("swarm")
+
+def worker(queue, proxy_url, test_cmd, max_attempts):
+    while True:
+        path = queue.pop()
+        if path is None:
+            logger.info(f"{threading.current_thread().name} received shutdown signal.")
+            break
+        logger.info(f"[{threading.current_thread().name}] Processing {path}")
+        try:
+            success = fix_file_loop(path, proxy_url, test_cmd, max_attempts)
+            logger.info(f"[{threading.current_thread().name}] Finished {path}: {'Success' if success else 'Failure'}")
+        except Exception as e:
+            logger.exception(f"Unhandled exception processing {path}: {e}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Gemini Swarm Debugger")
+    parser.add_argument("action", choices=["fix"], help="Action to perform: fix")
+    parser.add_argument("files", nargs="+", help="List of Python files to debug and fix")
+    parser.add_argument("--proxy", default=PROXY_URL, help="URL of the Gemini Flask proxy")
+    parser.add_argument("--test-cmd", required=True, help="Command to test the file, e.g., 'pytest tests' or 'python script.py'")
+    parser.add_argument("--attempts", type=int, default=None, help="Max fix attempts per file (defaults to config)")
+    parser.add_argument("--workers", type=int, default=None, help="Number of parallel worker threads (defaults to config)")
+    args = parser.parse_args()
+
+    if args.action == "fix":
+        queue = TaskQueue()
+        for f in args.files:
+            queue.push(f)
+        # Sentinel None for each worker to exit
+        num_workers = args.workers or WORKER_COUNT
+        for _ in range(num_workers):
+            queue.push(None)
+
+        threads = []
+        for i in range(num_workers):
+            t = threading.Thread(
+                target=worker,
+                args=(queue, args.proxy, args.test_cmd, args.attempts or None),
+                name=f"Worker-{i+1}"
+            )
+            t.start()
+            threads.append(t)
+
+        for t in threads:
+            t.join()
+        logger.info("All workers have finished.")
+    else:
+        parser.error("Unsupported action. Use 'fix'.")
+
+if __name__ == "__main__":
+    main()
