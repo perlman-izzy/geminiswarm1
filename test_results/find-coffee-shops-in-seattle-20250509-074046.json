@@ -1,0 +1,21 @@
+{
+  "answer": "This is a test answer about Seattle coffee shops",
+  "categories": {
+    "Popular Chains": [
+      "Starbucks",
+      "Seattle's Best"
+    ],
+    "Independent Shops": [
+      "Espresso Vivace",
+      "Victrola"
+    ]
+  },
+  "limitations": [
+    "Limited to well-known shops"
+  ],
+  "sources": [
+    "Test source 1",
+    "Test source 2"
+  ],
+  "model_used_for_synthesis": "Gemini 1.5 Pro"
+}

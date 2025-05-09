@@ -1,85 +1,74 @@
 #!/usr/bin/env python3
 """
-Quick test script for the autonomous researcher system with a simplified example.
-
-This script provides a streamlined test of the system's core capabilities
-with a smaller scope to run faster for demonstration purposes.
+Quick test for the autonomous researcher's model fallback and tracking features
 """
 
 import json
-import time
-import logging
+import os
+import sys
 from autonomous_researcher import AutonomousResearcher
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-class SimplifiedResearcher(AutonomousResearcher):
-    """A simplified version of the autonomous researcher with faster execution."""
+def main():
+    """Run a quick test of the autonomous researcher with model tracking"""
+    # Create the researcher
+    researcher = AutonomousResearcher()
     
-    def __init__(self, base_url: str = "http://localhost:5000"):
-        """Initialize with a smaller max iterations value for quicker testing."""
-        super().__init__(base_url)
-        self.max_iterations = 3  # Limit to just 3 iterations for a quick test
+    print("Testing model tracking and result saving...")
     
-    def _assess_progress(self):
-        """Simplified assessment logic to complete after fixed iterations."""
-        # Always complete after the max iterations
-        if self.research_state["iterations"] >= self.max_iterations:
-            return True, "Reached test iteration limit"
-        
-        # Basic check if we have some findings
-        if len(self.research_state["findings"]) >= 2:
-            return True, "Found at least 2 sources with relevant information"
-            
-        return False, "Still collecting basic information"
-
-def run_quick_test():
-    """Run a quick test of the autonomous researcher."""
-    query = "Find piano bars in San Francisco"
+    # Quick test of _call_gemini function
+    print("\nTesting model usage tracking:")
     
-    print(f"\n{'='*80}\nQuick Test of Autonomous Researcher\n{'='*80}")
-    print(f"Query: {query}")
+    # High priority call
+    high_result = researcher._call_gemini("What is the capital of France?", "high")
+    print(f"High priority model used: {high_result.get('model_used', 'unknown')}")
     
-    researcher = SimplifiedResearcher()
+    # Low priority call
+    low_result = researcher._call_gemini("What is the capital of Italy?", "low")
+    print(f"Low priority model used: {low_result.get('model_used', 'unknown')}")
     
-    start_time = time.time()
+    # Test content analysis with model tracking
+    print("\nTesting content analysis with model tracking:")
+    analysis = researcher._analyze_content(
+        "Seattle is known for its coffee culture. Some popular coffee shops include Espresso Vivace, Victrola, and Stumptown.",
+        "Find coffee shops in Seattle"
+    )
+    print(f"Content analysis model used: {analysis.get('model_used', 'unknown')}")
     
-    try:
-        print("Starting simplified research...\n")
-        results = researcher.research(query)
-        
-    except Exception as e:
-        logger.error(f"Error during research: {e}")
-        results = {"answer": f"Error during research: {e}", "limitations": ["Research encountered an error"]}
+    # Test result saving
+    print("\nTesting result saving:")
     
-    elapsed_time = time.time() - start_time
+    # Create a simple mock result
+    mock_result = {
+        "answer": "This is a test answer about Seattle coffee shops",
+        "categories": {
+            "Popular Chains": ["Starbucks", "Seattle's Best"],
+            "Independent Shops": ["Espresso Vivace", "Victrola"]
+        },
+        "limitations": ["Limited to well-known shops"],
+        "sources": ["Test source 1", "Test source 2"],
+        "model_used_for_synthesis": "Gemini 1.5 Pro"
+    }
     
-    print(f"\n{'='*80}")
-    print(f"Research completed in {elapsed_time:.2f} seconds")
-    print(f"{'='*80}\n")
+    # Save to file
+    json_path, text_path = researcher.save_results(
+        mock_result,
+        "Find coffee shops in Seattle",
+        "test_results"
+    )
     
-    print("ANSWER:")
-    print(results.get("answer", "No answer generated"))
+    print(f"Results saved to:")
+    print(f"JSON: {json_path}")
+    print(f"Text: {text_path}")
     
-    print("\nCATEGORIES:")
-    for category, items in results.get("categories", {}).items():
-        print(f"\n{category}:")
-        for item in items:
-            print(f"- {item}")
+    # Print text file contents
+    if os.path.exists(text_path):
+        print("\nContents of the text file:")
+        print("-" * 80)
+        with open(text_path, 'r') as f:
+            print(f.read())
+        print("-" * 80)
     
-    print("\nLIMITATIONS:")
-    for limitation in results.get("limitations", []):
-        print(f"- {limitation}")
-    
-    print("\nRESEARCH METADATA:")
-    metadata = results.get("research_metadata", {})
-    print(f"- Iterations: {metadata.get('iterations', 0)}")
-    print(f"- Search terms used: {metadata.get('search_terms_used', 0)}")
-    print(f"- URLs visited: {metadata.get('urls_visited', 0)}")
-    
-    return results
+    print("\nTest completed successfully!")
 
 if __name__ == "__main__":
-    run_quick_test()
+    main()

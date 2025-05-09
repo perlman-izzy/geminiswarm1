@@ -19,7 +19,14 @@ def main():
     print("This will test the model fallback feature and result saving")
     
     # Run the research with a limited number of iterations (to make it faster)
-    researcher.max_iterations = 3  # Limit to just 3 iterations for the test
+    researcher.max_iterations = 2  # Limit to just 2 iterations for the test
+    
+    # Limit to just 1 URL per search to make it run faster
+    original_select_urls = researcher._select_urls_to_visit
+    def faster_url_selection(search_results):
+        urls = original_select_urls(search_results)
+        return urls[:1] if urls else []
+    researcher._select_urls_to_visit = faster_url_selection
     
     # Run the research and save results
     results = researcher.research(query, save_results_to_file=True)

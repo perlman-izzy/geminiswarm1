@@ -686,6 +686,12 @@ class AutonomousResearcher:
             "urls_visited": len(self.research_state["visited_urls"])
         }
         
+        # Track which model was used for synthesis
+        if "model_used" in result:
+            synthesis["model_used_for_synthesis"] = result["model_used"]
+        else:
+            synthesis["model_used_for_synthesis"] = "unknown"
+            
         logger.info("Research synthesis complete")
         return synthesis
     

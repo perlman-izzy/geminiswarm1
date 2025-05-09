@@ -1,0 +1,23 @@
+================================================================================
+Research Results: Find coffee shops in Seattle
+================================================================================
+
+ANSWER:
+This is a test answer about Seattle coffee shops
+
+FINDINGS BY CATEGORY:
+
+POPULAR CHAINS:
+  1. Starbucks
+  2. Seattle's Best
+
+INDEPENDENT SHOPS:
+  1. Espresso Vivace
+  2. Victrola
+
+LIMITATIONS:
+- Limited to well-known shops
+
+SOURCES:
+- Test source 1
+- Test source 2
