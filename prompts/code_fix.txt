@@ -1,0 +1,34 @@
+You are debugging a Python file that has errors. Please fix the code below based on the error messages.
+
+## Original Code:
+```python
+def calculate_average(numbers):
+    """Calculate the average of a list of numbers."""
+    # Bug 1: Missing check for empty list
+    return sum(numbers) / len(numbers)
+
+def find_max_value(numbers):
+    """Find the maximum value in a list."""
+    # Bug 2: Missing check for empty list
+    max_val = numbers[0]
+    for num in numbers:
+        if num > max_val:
+            max_val = num
+    return max_val
+```
+
+## Error Output:
+```
+ERROR: test_calculate_average (__main__.TestBuggyCode.test_calculate_average)
+Test the calculate_average function.
+----------------------------------------------------------------------
+AssertionError: ZeroDivisionError not raised
+```
+
+## Instructions:
+1. Analyze the error message and identify the issues in the code.
+2. Provide the complete fixed code (not just the changes).
+3. Make minimal changes necessary to fix the errors.
+4. Ensure your solution is complete and syntactically correct.
+5. Do not change functionality, only fix what's broken.
+6. Format your response with ONLY the complete fixed code, no explanations.
