@@ -68,34 +68,24 @@ def call_gemini():
             
             try:
                 logger.info(f"Attempt {attempt+1}/{max_attempts}: Using API key: {api_key[:5]}... for request")
-                genai.configure(api_key=api_key)
+                from ai_helper import configure_genai, get_model, generate_content, get_response_text
+                configure_genai(api_key)
                 
-                # Try with different models if available - start with newer models
-                model_names = [
-                    "models/gemini-1.5-flash",      # Faster, lower quality
-                    "models/gemini-1.5-pro",        # Higher quality, slower
-                    "models/gemini-pro-vision",     # Fallback older model
-                ]
+                # Use models from config
+                model_names = DEFAULT_MODELS
                 
                 # Try each model until one works
                 for model_name in model_names:
                     try:
-                        model = genai.GenerativeModel(model_name)
+                        model = get_model(model_name)
                         logger.debug(f"Trying model: {model_name}")
                         logger.debug(f"Sending prompt: {prompt[:50]}...")
                         
-                        # Safety settings to minimize filtering
-                        safety_settings = {
-                            "HARASSMENT": "BLOCK_NONE",
-                            "HATE": "BLOCK_NONE",
-                            "SEXUAL": "BLOCK_NONE",
-                            "DANGEROUS": "BLOCK_NONE",
-                        }
-                        
-                        response = model.generate_content(
+                        response = generate_content(
+                            model,
                             prompt, 
-                            safety_settings=safety_settings,
-                            generation_config={"temperature": 0.7, "max_output_tokens": 1000}
+                            safety_settings=SAFETY_SETTINGS,
+                            generation_config=GENERATION_CONFIG
                         )
                         
                         # Log successful request

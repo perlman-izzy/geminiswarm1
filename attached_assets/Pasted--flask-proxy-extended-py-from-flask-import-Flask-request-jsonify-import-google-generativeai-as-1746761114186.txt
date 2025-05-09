@@ -1,0 +1,166 @@
+# flask\_proxy\_extended.py
+
+from flask import Flask, request, jsonify
+import google.generativeai as genai
+import itertools
+import os
+import shutil
+import subprocess
+import requests
+from bs4 import BeautifulSoup
+from duckduckgo\_search import ddg
+
+app = Flask(**name**)
+
+# Rotate through Gemini API keys
+
+API\_KEYS = \[
+"cwV8AcSbpNvcvrMwhDTArKjQsk",
+"AIzaSyBcwbIZPq3yqVonOG-8AqPSaUuv6vzQWyRE",
+"AIzaSyDln6sUGiaidN5CmKDGw3qt1spvgz94QKo",
+"AIzaSyDozMeIBRZrvGYSt8Ffua3rGp4DlDnONEo",
+"AIzaSyBAvBbhU71l63Ei25F-eHb0QMKjuotDPIg",
+"AIzaSyCre8WOWbchKsT7l67V7aIsMGneIEOa59s",
+"AIzaSyCV3OauLHIpUHV722MszP2JTir\_tkC1ECM",
+"AIzaSyCvKDI8jyoWDYGIaolxsi5A95MPxR2EDKQ",
+"AIzaSyAeONfijWy8EPJqAY3B0DJedepcGyYRrWU",
+]
+key\_iter = itertools.cycle(API\_KEYS)
+
+# Model selection for delegation
+
+# Small model for low-priority (dumb) tasks
+
+SMALL\_MODEL = 'models/gemini-1.5-flash-8b'  # low-cost model for straightforward tasks ([ai.google.dev](https://ai.google.dev/gemini-api/docs/models/gemini?utm_source=chatgpt.com))
+
+# Large model for high-priority (thinking) tasks
+
+LARGE\_MODEL = 'models/gemini-2.5-pro-preview-05-06'  # advanced reasoning model ([ai.google.dev](https://ai.google.dev/gemini-api/docs/models?utm_source=chatgpt.com))
+
+# --- Gemini endpoint with delegation ---
+
+@app.route('/gemini', methods=\['POST'])
+def call\_gemini():
+data = request.get\_json() or {}
+prompt = data.get('prompt', '')
+\# Priority: 'low' for simple, 'high' for complex reasoning
+priority = data.get('priority', 'low')
+if not prompt:
+return jsonify({'error': 'Missing prompt'}), 400
+api\_key = next(key\_iter)
+genai.configure(api\_key=api\_key)
+\# Choose model based on priority
+model\_name = LARGE\_MODEL if priority == 'high' else SMALL\_MODEL
+model = genai.GenerativeModel(model\_name)
+response = model.generate\_content(prompt)
+return jsonify({'response': response.text, 'model\_used': model\_name})
+
+# --- Web Search endpoint ---
+
+@app.route('/search', methods=\['POST'])
+def web\_search():
+data = request.get\_json() or {}
+query = data.get('query', '')
+if not query:
+return jsonify({'error': 'Missing query'}), 400
+try:
+results = ddg(query, max\_results=20)
+return jsonify({'results': results})
+except Exception as e:
+return jsonify({'error': str(e)}), 500
+
+# --- HTTP GET / Scrape endpoint ---
+
+@app.route('/fetch\_url', methods=\['POST'])
+def fetch\_url():
+data = request.get\_json() or {}
+url = data.get('url', '')
+if not url:
+return jsonify({'error': 'Missing url'}), 400
+try:
+resp = requests.get(url, timeout=10)
+return jsonify({'status\_code': resp.status\_code, 'text': resp.text})
+except Exception as e:
+return jsonify({'error': str(e)}), 500
+
+# --- Text Scraping endpoint ---
+
+@app.route('/scrape\_text', methods=\['POST'])
+def scrape\_text():
+data = request.get\_json() or {}
+url = data.get('url', '')
+selector = data.get('selector')
+if not url:
+return jsonify({'error': 'Missing url'}), 400
+try:
+resp = requests.get(url, timeout=10)
+soup = BeautifulSoup(resp.text, 'html.parser')
+if selector:
+elements = soup.select(selector)
+text = '\n'.join(\[el.get\_text() for el in elements])
+else:
+text = soup.get\_text()
+return jsonify({'text': text})
+except Exception as e:
+return jsonify({'error': str(e)}), 500
+
+# --- File System Endpoints ---
+
+@app.route('/list\_files', methods=\['GET'])
+def list\_files():
+path = request.args.get('path', '.')
+files = \[]
+for root, dirs, fs in os.walk(path):
+for f in fs:
+files.append(os.path.join(root, f))
+return jsonify({'files': files})
+
+@app.route('/read\_file', methods=\['POST'])
+def read\_file():
+data = request.get\_json() or {}
+path = data.get('path', '')
+if not path or not os.path.isfile(path):
+return jsonify({'error': 'Invalid path'}), 400
+with open(path, 'r', encoding='utf-8') as f:
+content = f.read()
+return jsonify({'content': content})
+
+@app.route('/write\_file', methods=\['POST'])
+def write\_file():
+data = request.get\_json() or {}
+path = data.get('path', '')
+content = data.get('content')
+if not path or content is None:
+return jsonify({'error': 'Missing path or content'}), 400
+bak = path + '.bak'
+try:
+shutil.copy2(path, bak)
+except Exception:
+pass
+with open(path, 'w', encoding='utf-8') as f:
+f.write(content)
+return jsonify({'status': 'ok'})
+
+# --- Execute script endpoint ---
+
+@app.route('/exec', methods=\['POST'])
+def execute\_script():
+data = request.get\_json() or {}
+cmd = data.get('cmd', '')
+cwd = data.get('cwd')
+timeout = data.get('timeout', 60)
+if not cmd:
+return jsonify({'error': 'Missing cmd'}), 400
+cmd\_list = cmd.split() if isinstance(cmd, str) else cmd
+try:
+proc = subprocess.run(cmd\_list, cwd=cwd, capture\_output=True, text=True, timeout=timeout)
+return jsonify({
+'returncode': proc.returncode,
+'stdout': proc.stdout,
+'stderr': proc.stderr
+})
+except Exception as e:
+return jsonify({'error': str(e)}), 500
+
+if **name** == '**main**':
+app.run(host='0.0.0.0', port=3000)

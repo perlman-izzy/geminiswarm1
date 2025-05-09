@@ -1,33 +1,13 @@
-import os
-import logging
+from flask import Flask, request, jsonify
+import google.generativeai as genai
 import itertools
-import time
+import os
 import shutil
 import subprocess
-from flask import Flask, request, jsonify, render_template
-import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
-
-# Configure Google Generative AI with appropriate imports from newer SDK
-try:
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
-    # Set up safety settings with the new API format
-    SAFETY_SETTINGS = {
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-    }
-except ImportError:
-    # Fallback for older versions of the SDK
-    SAFETY_SETTINGS = {
-        "HARASSMENT": "BLOCK_NONE",
-        "HATE": "BLOCK_NONE",
-        "SEXUAL": "BLOCK_NONE",
-        "DANGEROUS": "BLOCK_NONE",
-    }
+import logging
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, 
@@ -35,11 +15,9 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "default-secret-key")
 
-# Get API keys from environment variables (using the ones we already have)
+# Rotate through Gemini API keys
 API_KEYS = [
-    # Fresh API keys provided by the user
     "AIzaSyCcqC_3qZjfunJmEVDwH25cYiT6EoyVCqA",
     "AIzaSyAqsSH2B0ZrFrBqcs7QJZle6hFlx9O3zC4",
     "AIzaSyDcf_j8sk-gQK_z3QRupDOBxSQbzGPPwbs",
@@ -59,138 +37,89 @@ API_KEYS = [
     os.environ.get("GOOGLE_API_KEY3"),
 ]
 
-# Remove any None or empty values from API_KEYS
+# Remove None values
 API_KEYS = [key for key in API_KEYS if key]
 
-logger.info(f"Loaded {len(API_KEYS)} API keys for rotation")
-
-# Create a cyclic iterator through the API keys
 key_iter = itertools.cycle(API_KEYS)
 
-# Track API key usage and failures
-key_statistics = {key: {"uses": 0, "failures": 0} for key in API_KEYS}
+# Model selection for delegation
+# Small model for low-priority (dumb) tasks
+SMALL_MODEL = 'models/gemini-1.5-flash'  # low-cost model for straightforward tasks
 
+# Large model for high-priority (thinking) tasks
+LARGE_MODEL = 'models/gemini-1.5-pro'  # advanced reasoning model
 
-@app.route("/", methods=["GET"])
-def index():
-    """Render the web interface for the Gemini proxy."""
-    return render_template("index.html")
-
-
-@app.route("/gemini", methods=["POST"])
+# --- Gemini endpoint with delegation ---
+@app.route('/gemini', methods=['POST'])
 def call_gemini():
-    """Proxy endpoint for Gemini API calls with key rotation."""
     try:
-        logger.info("Received request to /gemini endpoint")
-        data = request.get_json()
-        logger.debug(f"Request data: {data}")
-        
-        if not data:
-            logger.error("No JSON data received in request")
-            return jsonify({"error": "No data provided", "status": "error"}), 400
-        
-        prompt = data.get("prompt", "")
-        logger.info(f"Prompt received: {prompt[:50]}...")
+        data = request.get_json() or {}
+        prompt = data.get('prompt', '')
+        # Priority: 'low' for simple, 'high' for complex reasoning
+        priority = data.get('priority', 'low')
         
         if not prompt:
             logger.error("No prompt provided in request")
-            return jsonify({"error": "No prompt provided", "status": "error"}), 400
-        
-        # Try up to 5 different API keys in case of failures
-        max_attempts = min(5, len(API_KEYS))
-        retry_delay = 2  # seconds between retries
-        
-        for attempt in range(max_attempts):
-            api_key = next(key_iter)
-            key_statistics[api_key]["uses"] += 1
+            return jsonify({'error': 'Missing prompt', 'status': 'error'}), 400
             
-            try:
-                logger.info(f"Attempt {attempt+1}/{max_attempts}: Using API key: {api_key[:5]}... for request")
-                genai.configure(api_key=api_key)
-                
-                # Try with different models if available - start with newer models
-                model_names = [
-                    "models/gemini-1.5-flash",      # Faster, lower quality
-                    "models/gemini-1.5-pro",        # Higher quality, slower
-                    "models/gemini-pro-vision",     # Fallback older model
-                ]
-                
-                # Try each model until one works
-                for model_name in model_names:
-                    try:
-                        model = genai.GenerativeModel(model_name)
-                        logger.debug(f"Trying model: {model_name}")
-                        logger.debug(f"Sending prompt: {prompt[:50]}...")
-                        
-                        # Use the global safety settings
-                        response = model.generate_content(
-                            prompt, 
-                            safety_settings=SAFETY_SETTINGS,
-                            generation_config={"temperature": 0.7, "max_output_tokens": 1000}
-                        )
-                        
-                        # Log successful request
-                        logger.info(f"Successfully processed request with key {api_key[:5]}... and model {model_name}")
-                        logger.debug(f"Response text: {response.text[:100]}...")
-                        
-                        return jsonify({
-                            "response": response.text,
-                            "status": "success",
-                            "model": model_name
-                        })
-                    
-                    except Exception as model_error:
-                        logger.warning(f"Model {model_name} failed: {str(model_error)}")
-                        continue  # Try next model
-                
-                # If we get here, all models failed with this key
-                raise Exception(f"All models failed with API key {api_key[:5]}...")
-                
-            except Exception as e:
-                # Handle rate limiting specially
-                if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
-                    logger.warning(f"Rate limit hit with key {api_key[:5]}... : {str(e)}")
-                else:
-                    logger.warning(f"API key {api_key[:5]}... failed: {str(e)}")
-                
-                # Log the failure and try next key
-                key_statistics[api_key]["failures"] += 1
-                
-                # Wait before trying next key
-                if attempt < max_attempts - 1:
-                    logger.info(f"Waiting {retry_delay}s before trying next key...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 1.5  # Increase delay for each retry
+        api_key = next(key_iter)
+        logger.info(f"Using API key: {api_key[:5]}... with priority {priority}")
         
-        # If we've tried multiple keys and all failed
-        logger.error("All API keys failed to process the request")
+        # Import and use our helper functions
+        from ai_helper import configure_genai, get_model, generate_content, get_response_text
+        configure_genai(api_key)
+        
+        # Choose model based on priority
+        model_name = LARGE_MODEL if priority == 'high' else SMALL_MODEL
+        logger.info(f"Selected model: {model_name} for {priority} priority task")
+        
+        model = get_model(model_name)
+        
+        # Configure safety settings to minimize filtering
+        try:
+            from google.generativeai.types import HarmCategory, HarmBlockThreshold
+            safety_settings = {
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+        except ImportError:
+            safety_settings = {
+                "HARASSMENT": "BLOCK_NONE",
+                "HATE": "BLOCK_NONE",
+                "SEXUAL": "BLOCK_NONE",
+                "DANGEROUS": "BLOCK_NONE",
+            }
+            
+        # Generation configuration
+        gen_config = {
+            "temperature": 0.7,
+            "max_output_tokens": 8192,
+            "top_p": 0.95,
+            "top_k": 40,
+        }
+        
+        response = generate_content(
+            model,
+            prompt, 
+            safety_settings=safety_settings,
+            generation_config=gen_config
+        )
+        
+        response_text = get_response_text(response)
+        logger.info(f"Successfully processed request with model {model_name}")
+        logger.debug(f"Response text: {response_text[:100]}...")
+        
         return jsonify({
-            "error": "All available API keys failed to process your request",
-            "status": "error"
-        }), 500
-        
+            'response': response_text, 
+            'model_used': model_name,
+            'status': 'success',
+            'priority': priority
+        })
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        logger.exception("Detailed exception info:")
-        return jsonify({
-            "error": str(e),
-            "status": "error"
-        }), 500
-
-
-@app.route("/stats", methods=["GET"])
-def get_stats():
-    """Return anonymized API key usage statistics."""
-    # Create anonymized version of stats
-    anonymized_stats = {}
-    for i, key in enumerate(API_KEYS):
-        anonymized_stats[f"key_{i+1}"] = key_statistics[key]
-    
-    return jsonify({
-        "total_keys": len(API_KEYS),
-        "key_stats": anonymized_stats
-    })
-
+        logger.error(f"Error in call_gemini: {str(e)}")
+        return jsonify({'error': str(e), 'status': 'error'}), 500
 
 # --- Web Search endpoint ---
 @app.route('/search', methods=['POST'])
@@ -201,14 +130,13 @@ def web_search():
     if not query:
         return jsonify({'error': 'Missing query'}), 400
     try:
-        # Using duckduckgo_search library with DDGS class
+        # Using duckduckgo_search library
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         return jsonify({'results': results})
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 # --- HTTP GET / Scrape endpoint ---
 @app.route('/fetch_url', methods=['POST'])
@@ -223,7 +151,6 @@ def fetch_url():
     except Exception as e:
         logger.error(f"Fetch URL error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 # --- Text Scraping endpoint ---
 @app.route('/scrape_text', methods=['POST'])
@@ -246,7 +173,6 @@ def scrape_text():
         logger.error(f"Scrape text error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 # --- File System Endpoints ---
 @app.route('/list_files', methods=['GET'])
 def list_files():
@@ -256,7 +182,6 @@ def list_files():
         for f in fs:
             files.append(os.path.join(root, f))
     return jsonify({'files': files})
-
 
 @app.route('/read_file', methods=['POST'])
 def read_file():
@@ -271,7 +196,6 @@ def read_file():
     except Exception as e:
         logger.error(f"Read file error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/write_file', methods=['POST'])
 def write_file():
@@ -296,7 +220,6 @@ def write_file():
     except Exception as e:
         logger.error(f"Write file error: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
 
 # --- Execute script endpoint ---
 @app.route('/exec', methods=['POST'])
@@ -323,7 +246,6 @@ def execute_script():
         logger.error(f"Execute script error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-
 if __name__ == "__main__":
-    logger.info("Starting Gemini API Proxy server on port 3000")
-    app.run(host="0.0.0.0", port=3000, debug=True)
+    logger.info("Starting Extended Gemini API Proxy server on port 3000")
+    app.run(host='0.0.0.0', port=3000, debug=True)

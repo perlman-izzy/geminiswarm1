@@ -71,6 +71,8 @@ GENERATION_CONFIG = {
 MAX_WORKERS = 4
 MAX_ATTEMPTS = 3
 DEFAULT_TEST_CMD = "python -m unittest discover"
+WORKER_COUNT = 4  # Number of parallel workers to use
+PROXY_URL = "http://localhost:5000/gemini"  # Default URL for the Gemini proxy
 
 # Logging configuration
 LOG_LEVEL = "DEBUG"
