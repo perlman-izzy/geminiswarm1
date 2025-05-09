@@ -1,0 +1,42 @@
+
+================================================================================
+Research System Demo
+================================================================================
+Query: Find piano bars in San Francisco
+Starting demonstration research...
+
+
+================================================================================
+Research completed in 5.10 seconds
+================================================================================
+
+ANSWER:
+Found 3 piano bars in San Francisco including Martuni's, Johnny Foley's Irish House, Gold Dust Lounge. Key information: The atmosphere can range from casual to upscale.
+
+VENUES FOUND:
+
+- Martuni's
+  * Martuni's: Patrons sing show tunes, features a large selection of martinis, described as a popular piano bar and a training ground for cabaret singers, upscale atmosphere.
+  * Martuni's: 4 Valencia St, San Francisco, CA 94103, United States
+
+- Johnny Foley's Irish House
+  * Johnny Foley's Irish House: Dueling pianos, classic rock and oldies, Latin fusion, R&B, Irish pub atmosphere, serves food and drinks.
+  * Johnny Foley's Irish House: 243 O'Farrell St, San Francisco, CA 94102
+
+- Gold Dust Lounge
+  * Gold Dust Lounge:  (Information incomplete in provided text)
+  * Gold Dust Lounge: 165 Jefferson St., Suite 1, San Francisco, CA 94133
+
+KEY FACTS:
+- The atmosphere can range from casual to upscale.
+- Billy Joel's "Piano Man" is a frequently played song in these establishments.
+- Piano bars in San Francisco, also known as piano lounges, feature live piano music played by professional musicians.
+- There are still about 10 piano bars in San Francisco.
+- Piano bars are a part of the Bay Area's nightlife scene.
+
+LIMITATIONS:
+- Limited search scope for demonstration
+
+RESEARCH METADATA:
+- URLs visited: 2
+- Search terms used: 1
