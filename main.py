@@ -1,14 +1,41 @@
 #!/usr/bin/env python3
 """
 Main entry point for the Multi-Agent Gemini AI System
+Incorporates both the main interface and extended functionality
 """
 import os
 import sys
 import logging
+import random
+import requests
+import json
+import traceback
+import time
+from typing import Dict, List, Any, Optional, Union, Tuple
 from flask import Flask, request, jsonify, render_template, redirect, url_for
 
 # Import from config
-from config import LOG_DIR, API_KEYS
+from config import LOG_DIR, API_KEYS, GEMINI_MODELS
+
+# For extended proxy functionality
+import google.generativeai as genai
+from duckduckgo_search import DDGS
+import wikipedia
+from pytrends.request import TrendReq
+import feedparser
+import nltk
+import re
+import bs4
+from textblob import TextBlob
+from urllib.parse import urlparse, urljoin
+from concurrent.futures import ThreadPoolExecutor
+import trafilatura
+import subprocess
+import importlib
+import glob
+
+# Import our AI helper
+from ai_helper import configure_genai, get_model, generate_content, get_response_text
 
 # Create logs directory if it doesn't exist
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -24,8 +51,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+# Initialize NLTK for text processing
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('wordnet', quiet=True)
+except Exception as e:
+    logger.error(f"Error initializing NLTK: {e}")
+
 # Create the Flask app
 app = Flask(__name__)
+
+# Key rotation tracking
+key_usage = {}
 
 @app.route('/')
 def index():
@@ -45,18 +83,743 @@ def status():
     return jsonify({
         "status": "ok",
         "api_keys_available": len([k for k in API_KEYS if k]),
-        "extended_proxy_running": is_service_running(3000)
+        "services": {
+            "gemini": True,
+            "web_search": True,
+            "wikipedia": True,
+            "news": True,
+            "trends": True,
+            "file_operations": True,
+            "text_analysis": True
+        }
     })
+
+@app.route('/gemini', methods=['POST'])
+def call_gemini():
+    """
+    Proxy endpoint for Gemini API calls with intelligent model selection.
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or "prompt" not in data:
+            return jsonify({"error": "Missing prompt in request"}), 400
+        
+        prompt = data.get("prompt", "")
+        priority = data.get("priority", "low")
+        verbose = data.get("verbose", False)
+        
+        if not prompt.strip():
+            return jsonify({"error": "Empty prompt"}), 400
+        
+        # Call Gemini with model selection
+        result = call_gemini_with_model_selection(prompt, priority, verbose)
+        
+        if result["status"] == "success":
+            return jsonify({
+                "response": result["response"],
+                "model_used": result["model_used"]
+            })
+        else:
+            return jsonify({"error": result["response"]}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in Gemini endpoint: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/web_search', methods=['POST'])
+def web_search_endpoint():
+    """Endpoint for web search."""
+    try:
+        data = request.get_json()
+        query = data.get("query", "")
+        max_results = int(data.get("max_results", 10))
+        
+        if not query:
+            return jsonify({"error": "Query parameter is required"}), 400
+        
+        results = web_search(query, max_results)
+        return jsonify({"results": results})
+    
+    except Exception as e:
+        logger.error(f"Error in web search endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/fetch_url', methods=['POST'])
+def fetch_url_endpoint():
+    """Endpoint for fetching URL content."""
+    try:
+        data = request.get_json()
+        url = data.get("url", "")
+        
+        if not url:
+            return jsonify({"error": "URL parameter is required"}), 400
+        
+        content = fetch_url_content(url)
+        return jsonify({"content": content})
+    
+    except Exception as e:
+        logger.error(f"Error in fetch URL endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/scrape_text', methods=['POST'])
+def scrape_text_endpoint():
+    """Endpoint for scraping text from a URL."""
+    try:
+        data = request.get_json()
+        url = data.get("url", "")
+        
+        if not url:
+            return jsonify({"error": "URL parameter is required"}), 400
+        
+        # First fetch the raw content
+        html_content = fetch_url_content(url)
+        
+        # Then extract the text
+        extracted_text = extract_text_from_html(html_content)
+        
+        return jsonify({
+            "url": url,
+            "text": extracted_text
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in scrape text endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/wikipedia', methods=['POST'])
+def wikipedia_endpoint():
+    """Endpoint for fetching Wikipedia content."""
+    try:
+        data = request.get_json()
+        topic = data.get("topic", "")
+        sentences = int(data.get("sentences", 5))
+        
+        if not topic:
+            return jsonify({"error": "Topic parameter is required"}), 400
+        
+        content = get_wikipedia_content(topic, sentences)
+        return jsonify({"content": content})
+    
+    except Exception as e:
+        logger.error(f"Error in Wikipedia endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/trends', methods=['GET'])
+def trends_endpoint():
+    """Endpoint for getting trending topics."""
+    try:
+        region = request.args.get("region", "US")
+        trending = get_trending_topics(region)
+        return jsonify({"trends": trending, "region": region})
+    
+    except Exception as e:
+        logger.error(f"Error in trends endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/news', methods=['POST'])
+def news_endpoint():
+    """Endpoint for fetching news."""
+    try:
+        data = request.get_json()
+        topic = data.get("topic")
+        feed_url = data.get("feed_url")
+        max_items = int(data.get("max_items", 10))
+        
+        news_items = fetch_news(topic, feed_url, max_items)
+        return jsonify({"news": news_items})
+    
+    except Exception as e:
+        logger.error(f"Error in news endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/list_files', methods=['POST'])
+def list_files_endpoint():
+    """Endpoint for listing files."""
+    try:
+        data = request.get_json()
+        path = data.get("path", ".")
+        
+        files = list_directory(path)
+        return jsonify({"files": files})
+    
+    except Exception as e:
+        logger.error(f"Error in list_files endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/read_file', methods=['POST'])
+def read_file_endpoint():
+    """Endpoint for reading a file."""
+    try:
+        data = request.get_json()
+        filepath = data.get("filepath", "")
+        
+        if not filepath:
+            return jsonify({"error": "Filepath parameter is required"}), 400
+        
+        content = read_file_content(filepath)
+        return jsonify({"content": content})
+    
+    except Exception as e:
+        logger.error(f"Error in read_file endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/write_file', methods=['POST'])
+def write_file_endpoint():
+    """Endpoint for writing to a file."""
+    try:
+        data = request.get_json()
+        filepath = data.get("filepath", "")
+        content = data.get("content", "")
+        
+        if not filepath:
+            return jsonify({"error": "Filepath parameter is required"}), 400
+        
+        result = write_file_content(filepath, content)
+        return jsonify(result)
+    
+    except Exception as e:
+        logger.error(f"Error in write_file endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/sentiment', methods=['POST'])
+def sentiment_endpoint():
+    """Endpoint for sentiment analysis."""
+    try:
+        data = request.get_json()
+        text = data.get("text", "")
+        
+        if not text:
+            return jsonify({"error": "Text parameter is required"}), 400
+        
+        sentiment = analyze_sentiment(text)
+        return jsonify(sentiment)
+    
+    except Exception as e:
+        logger.error(f"Error in sentiment endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/keywords', methods=['POST'])
+def keywords_endpoint():
+    """Endpoint for keyword extraction."""
+    try:
+        data = request.get_json()
+        text = data.get("text", "")
+        num_keywords = int(data.get("num_keywords", 10))
+        
+        if not text:
+            return jsonify({"error": "Text parameter is required"}), 400
+        
+        keywords = extract_keywords(text, num_keywords)
+        return jsonify({"keywords": keywords})
+    
+    except Exception as e:
+        logger.error(f"Error in keywords endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/docs')
 def docs():
     """Render the documentation page."""
     return render_template('index.html')
 
+# Helper Functions for Web Search and Content
+
+def web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+    """
+    Perform a web search using DuckDuckGo.
+    
+    Args:
+        query: Search query
+        max_results: Maximum number of results to return
+        
+    Returns:
+        List of search results (dicts with title, url, body)
+    """
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        logger.info(f"Web search found {len(results)} results for query: {query}")
+        return results
+    except Exception as e:
+        logger.error(f"Web search error: {e}")
+        return []
+
+def get_trending_topics(region: str = 'US') -> List[str]:
+    """
+    Get current trending topics from Google Trends.
+    
+    Args:
+        region: Country code for regional trends
+        
+    Returns:
+        List of trending topics
+    """
+    try:
+        pytrend = TrendReq()
+        trending_searches = pytrend.trending_searches(pn=region)
+        return trending_searches[0].tolist()
+    except Exception as e:
+        logger.error(f"Error getting trending topics: {e}")
+        return []
+
+def fetch_news(topic: Optional[str] = None, feed_url: Optional[str] = None, max_items: int = 10) -> List[Dict[str, str]]:
+    """
+    Fetch news from RSS feeds.
+    
+    Args:
+        topic: Topic to search for (optional)
+        feed_url: RSS feed URL (optional)
+        max_items: Maximum number of items to return
+        
+    Returns:
+        List of news items
+    """
+    try:
+        # Default to a general news feed if none provided
+        actual_feed_url = "http://rss.cnn.com/rss/cnn_topstories.rss"
+        if feed_url is not None:
+            actual_feed_url = feed_url
+        
+        feed = feedparser.parse(actual_feed_url)
+        items = []
+        
+        for entry in feed.entries[:max_items]:
+            item = {
+                "title": entry.get("title", ""),
+                "link": entry.get("link", ""),
+                "published": entry.get("published", ""),
+                "summary": entry.get("summary", "")
+            }
+            
+            # If no topic filter or topic is found in title/summary
+            if topic is None or (isinstance(topic, str) and 
+                                (topic.lower() in item["title"].lower() or 
+                                 topic.lower() in item["summary"].lower())):
+                items.append(item)
+                
+        return items
+    except Exception as e:
+        logger.error(f"Error fetching news: {e}")
+        return []
+
+def get_wikipedia_content(topic: str, sentences: int = 5) -> str:
+    """
+    Get content from Wikipedia on a given topic.
+    
+    Args:
+        topic: The topic to search for
+        sentences: Number of sentences to return
+        
+    Returns:
+        Wikipedia content
+    """
+    try:
+        # Search for the page
+        search_results = wikipedia.search(topic)
+        if not search_results:
+            return f"No Wikipedia page found for {topic}"
+        
+        # Get the first matching page
+        try:
+            page = wikipedia.page(search_results[0], auto_suggest=False)
+        except wikipedia.DisambiguationError as e:
+            # If disambiguation page, take the first option
+            page = wikipedia.page(e.options[0], auto_suggest=False)
+        
+        # Get a summary
+        summary = wikipedia.summary(page.title, sentences=sentences)
+        return f"Wikipedia - {page.title}:\n\n{summary}\n\nURL: {page.url}"
+    except Exception as e:
+        logger.error(f"Error getting Wikipedia content: {e}")
+        return f"Error retrieving Wikipedia content: {str(e)}"
+
+def fetch_url_content(url: str) -> str:
+    """
+    Fetch the raw content from a URL.
+    
+    Args:
+        url: The URL to fetch
+        
+    Returns:
+        Text content of the URL
+    """
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.error(f"Error fetching URL {url}: {e}")
+        return f"Error fetching URL: {str(e)}"
+
+def extract_text_from_html(html_content: str) -> str:
+    """
+    Extract meaningful text from HTML content using trafilatura.
+    
+    Args:
+        html_content: HTML content
+        
+    Returns:
+        Extracted text
+    """
+    try:
+        extracted_text = trafilatura.extract(html_content)
+        if extracted_text:
+            return extracted_text
+        else:
+            # Fallback to BeautifulSoup if trafilatura fails
+            soup = bs4.BeautifulSoup(html_content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.extract()
+            
+            # Get text
+            text = soup.get_text()
+            
+            # Break into lines and remove leading/trailing space
+            lines = (line.strip() for line in text.splitlines())
+            
+            # Break multi-headlines into a line each
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            
+            # Drop blank lines
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            return text
+    except Exception as e:
+        logger.error(f"Error extracting text: {e}")
+        return "Error extracting text from HTML"
+
+def analyze_sentiment(text: str) -> Dict[str, Any]:
+    """
+    Analyze the sentiment of text using TextBlob.
+    
+    Args:
+        text: Text to analyze
+        
+    Returns:
+        Dict with sentiment analysis
+    """
+    try:
+        # Use a simple implementation to avoid TextBlob property access issues
+        blob = TextBlob(text)
+        
+        # Manual access to avoid property access errors
+        # The sentiment attribute is actually a namedtuple with polarity and subjectivity
+        polarity = 0.0
+        subjectivity = 0.0
+        
+        try:
+            # Try different methods for accessing the sentiment values
+            polarity = float(blob.sentiment.polarity)
+            subjectivity = float(blob.sentiment.subjectivity)
+        except (AttributeError, TypeError):
+            try:
+                # Alternative: directly use the __dict__ method
+                sentiment_data = blob.sentiment
+                if hasattr(sentiment_data, "__dict__"):
+                    polarity = float(sentiment_data.__dict__.get("polarity", 0.0))
+                    subjectivity = float(sentiment_data.__dict__.get("subjectivity", 0.0))
+            except Exception:
+                # Last resort: implement a simple sentiment analyzer ourselves
+                # Count positive and negative words
+                positive_words = ["good", "great", "excellent", "amazing", "wonderful", "fantastic", 
+                                 "terrific", "outstanding", "superb", "awesome", "brilliant"]
+                negative_words = ["bad", "terrible", "awful", "horrible", "poor", "disappointing", 
+                                 "dreadful", "appalling", "atrocious", "abysmal"]
+                
+                words = text.lower().split()
+                positive_count = sum(1 for word in words if word in positive_words)
+                negative_count = sum(1 for word in words if word in negative_words)
+                
+                total_words = len(words) if words else 1  # Avoid division by zero
+                
+                # Simple calculation of polarity and subjectivity
+                polarity = (positive_count - negative_count) / total_words if total_words > 0 else 0
+                subjectivity = (positive_count + negative_count) / total_words if total_words > 0 else 0
+        
+        # Determine sentiment label
+        if polarity > 0.1:
+            label = "Positive"
+        elif polarity < -0.1:
+            label = "Negative"
+        else:
+            label = "Neutral"
+        
+        return {
+            "sentiment": label,
+            "polarity": polarity,
+            "subjectivity": subjectivity
+        }
+    except Exception as e:
+        logger.error(f"Error analyzing sentiment: {e}")
+        return {"error": str(e), "sentiment": "Unknown", "polarity": 0.0, "subjectivity": 0.0}
+
+def extract_keywords(text: str, num_keywords: int = 10) -> List[str]:
+    """
+    Extract the main keywords from text using NLTK.
+    
+    Args:
+        text: Text to analyze
+        num_keywords: Number of keywords to extract
+        
+    Returns:
+        List of keywords
+    """
+    try:
+        # Tokenize and convert to lowercase
+        tokens = nltk.word_tokenize(text.lower())
+        
+        # Remove stopwords and punctuation
+        stopwords = set(nltk.corpus.stopwords.words('english'))
+        words = [word for word in tokens if word.isalnum() and word not in stopwords]
+        
+        # Count word frequency
+        freq_dist = nltk.FreqDist(words)
+        
+        # Get the most common words
+        keywords = [word for word, _ in freq_dist.most_common(num_keywords)]
+        return keywords
+    except Exception as e:
+        logger.error(f"Error extracting keywords: {e}")
+        return []
+
+# File operations
+
+def list_directory(path: str = ".") -> List[str]:
+    """
+    List files in a directory.
+    
+    Args:
+        path: Directory path to list
+        
+    Returns:
+        List of files
+    """
+    try:
+        files = glob.glob(os.path.join(path, "*"))
+        return sorted(files)
+    except Exception as e:
+        logger.error(f"Error listing directory {path}: {e}")
+        return []
+
+def read_file_content(filepath: str) -> str:
+    """
+    Read a file and return its contents.
+    
+    Args:
+        filepath: Path to the file
+        
+    Returns:
+        File content as string
+    """
+    try:
+        if not os.path.exists(filepath):
+            return f"File not found: {filepath}"
+        
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as file:
+            content = file.read()
+        return content
+    except Exception as e:
+        logger.error(f"Error reading file {filepath}: {e}")
+        return f"Error reading file: {str(e)}"
+
+def write_file_content(filepath: str, content: str) -> Dict[str, Any]:
+    """
+    Write content to a file.
+    
+    Args:
+        filepath: Path to the file
+        content: Content to write
+        
+    Returns:
+        Dict with success status and message
+    """
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        
+        with open(filepath, 'w', encoding='utf-8') as file:
+            file.write(content)
+        
+        return {
+            "success": True,
+            "message": f"Successfully wrote to {filepath}"
+        }
+    except Exception as e:
+        logger.error(f"Error writing to file {filepath}: {e}")
+        return {
+            "success": False,
+            "message": f"Error writing to file: {str(e)}"
+        }
+
+# Gemini API Functions
+
+def get_api_key() -> str:
+    """
+    Get a random API key from the available keys.
+    
+    Returns:
+        Random API key
+    """
+    # Filter out keys that are empty or None
+    valid_keys = [key for key in API_KEYS if key]
+    
+    if not valid_keys:
+        logger.error("No valid API keys available")
+        return ""
+    
+    # Select a random key
+    selected_key = random.choice(valid_keys)
+    
+    # Update usage count
+    key_usage[selected_key] = key_usage.get(selected_key, 0) + 1
+    
+    return selected_key
+
+def call_gemini_with_model_selection(
+    prompt: str, 
+    priority: str = "low", 
+    verbose: bool = False,
+    max_attempts: int = 5
+) -> Dict[str, Any]:
+    """
+    Call the Gemini API with intelligent model selection based on priority.
+    
+    Args:
+        prompt: The prompt to send to Gemini
+        priority: Priority level (low or high)
+        verbose: Whether to output verbose logs
+        max_attempts: Maximum number of attempts to make
+        
+    Returns:
+        Response from Gemini API
+    """
+    # Ensure we always return a dictionary, even in error cases
+    result = {"response": "", "model_used": "none", "status": "error"}
+    
+    # Choose model based on priority
+    # For high priority/complex tasks, use a more powerful model
+    if priority.lower() == "high":
+        primary_model = GEMINI_MODELS.get("pro")
+        backup_models = [GEMINI_MODELS.get("flash"), GEMINI_MODELS.get("fallback")]
+    else:
+        # For regular tasks, use the standard model
+        primary_model = GEMINI_MODELS.get("flash")
+        backup_models = [GEMINI_MODELS.get("pro"), GEMINI_MODELS.get("fallback")]
+    
+    # Initialize the model list with default fallback
+    default_model = GEMINI_MODELS.get("fallback")
+    models_to_try = []
+    
+    # Add primary model if not None
+    if primary_model:
+        models_to_try.append(primary_model)
+    
+    # Add backup models if not None
+    for model in backup_models:
+        if model and model not in models_to_try:
+            models_to_try.append(model)
+    
+    # Make sure we always have at least one model to try
+    if not models_to_try and default_model:
+        models_to_try.append(default_model)
+    
+    # If still no models, return an error
+    if not models_to_try:
+        result["response"] = "No valid models configured"
+        return result
+    
+    # Get an API key
+    api_key = get_api_key()
+    if not api_key:
+        result["response"] = "No valid API key available"
+        return result
+    
+    # Configure the GenAI client
+    configure_genai(api_key)
+    
+    # Try models in order until we get a valid response
+    for i, model_name in enumerate(models_to_try):
+        # Skip any None models
+        if not model_name:
+            continue
+            
+        attempt = 0
+        while attempt < max_attempts:
+            try:
+                if verbose:
+                    logger.info(f"Trying model {model_name}, attempt {attempt+1}/{max_attempts}")
+                
+                # Get the generative model (model_name is guaranteed to be a string at this point)
+                model = get_model(model_name)
+                
+                # Generate content
+                response = generate_content(
+                    model, 
+                    prompt,
+                    safety_settings={
+                        "HARASSMENT": "BLOCK_NONE",
+                        "HATE": "BLOCK_NONE",
+                        "SEXUALLY_EXPLICIT": "BLOCK_NONE",
+                        "DANGEROUS": "BLOCK_NONE"
+                    },
+                    generation_config={
+                        "temperature": 0.7,
+                        "top_p": 0.95,
+                        "top_k": 40,
+                        "max_output_tokens": 8192,
+                    }
+                )
+                
+                # Extract text from response
+                text = get_response_text(response)
+                
+                # Return the result
+                result = {
+                    "response": text,
+                    "model_used": model_name,
+                    "status": "success"
+                }
+                
+                # Successfully received response
+                return result
+                
+            except Exception as e:
+                attempt += 1
+                error_msg = str(e)
+                if verbose:
+                    logger.error(f"Error with model {model_name}, attempt {attempt}: {error_msg}")
+                
+                # If we can't connect, switch models immediately
+                if "Failed to connect" in error_msg or "Could not connect" in error_msg:
+                    break
+                
+                # If we're rate limited or quota exceeded, try another key
+                if "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                    api_key = get_api_key()
+                    if api_key:
+                        configure_genai(api_key)
+                        continue
+                    else:
+                        # No more keys to try
+                        break
+                
+                # Other errors, sleep and retry
+                time.sleep(1)  # Sleep to prevent overloading the API
+    
+    # If we reach here, all models and attempts failed
+    result["response"] = "Failed to get a response from any available model"
+    return result
+
 @app.route('/proxy')
 def proxy_redirect():
-    """Redirect to the extended proxy endpoint."""
-    return redirect("http://localhost:3000")
+    """Redirect to the API documentation page."""
+    return redirect(url_for('index'))
 
 def is_service_running(port):
     """Check if a service is running on the given port."""
