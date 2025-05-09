@@ -42,31 +42,37 @@ def index():
 def call_gemini():
     """Proxy endpoint for Gemini API calls with key rotation."""
     try:
+        logger.info("Received request to /gemini endpoint")
         data = request.get_json()
+        logger.debug(f"Request data: {data}")
         
         if not data:
             logger.error("No JSON data received in request")
-            return jsonify({"error": "No data provided"}), 400
+            return jsonify({"error": "No data provided", "status": "error"}), 400
         
         prompt = data.get("prompt", "")
+        logger.info(f"Prompt received: {prompt[:50]}...")
         
         if not prompt:
             logger.error("No prompt provided in request")
-            return jsonify({"error": "No prompt provided"}), 400
+            return jsonify({"error": "No prompt provided", "status": "error"}), 400
         
         # Try up to 3 different API keys in case of failures
-        for _ in range(min(3, len(API_KEYS))):
+        for attempt in range(min(3, len(API_KEYS))):
             api_key = next(key_iter)
             key_statistics[api_key]["uses"] += 1
             
             try:
-                logger.debug(f"Using API key: {api_key[:5]}... for request")
+                logger.info(f"Attempt {attempt+1}: Using API key: {api_key[:5]}... for request")
                 genai.configure(api_key=api_key)
                 model = genai.GenerativeModel("gemini-pro")
+                
+                logger.debug(f"Sending prompt to Gemini: {prompt[:50]}...")
                 response = model.generate_content(prompt)
                 
                 # Log successful request
                 logger.info(f"Successfully processed request with key {api_key[:5]}...")
+                logger.debug(f"Response text: {response.text[:100]}...")
                 
                 return jsonify({
                     "response": response.text,
@@ -77,6 +83,7 @@ def call_gemini():
                 # Log the failure and try next key
                 key_statistics[api_key]["failures"] += 1
                 logger.warning(f"API key {api_key[:5]}... failed: {str(e)}")
+                logger.exception("Detailed exception info:")
                 continue
         
         # If we've tried multiple keys and all failed
@@ -88,6 +95,7 @@ def call_gemini():
         
     except Exception as e:
         logger.error(f"Error processing request: {str(e)}")
+        logger.exception("Detailed exception info:")
         return jsonify({
             "error": str(e),
             "status": "error"
