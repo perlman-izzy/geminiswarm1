@@ -4,42 +4,48 @@ Script to run the extended proxy server on port 3000.
 """
 import os
 import sys
-import logging
 import subprocess
+import time
+import signal
+import logging
 from config import LOG_DIR
 
 # Configure logging
-os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(LOG_DIR, "run_extended_proxy.log"))
+        logging.FileHandler(os.path.join(LOG_DIR, "extended_proxy.log"))
     ]
 )
 logger = logging.getLogger("run_extended_proxy")
 
 def main():
     """Run the extended proxy server."""
-    logger.info("Starting extended proxy server on port 3000")
+    # Get the path to gunicorn
+    gunicorn_path = subprocess.check_output("which gunicorn", shell=True).decode().strip()
+    logger.info(f"Using gunicorn at: {gunicorn_path}")
     
-    # Command to run the server
+    # Run the extended proxy server
     cmd = [
-        "gunicorn",
+        gunicorn_path,
         "--bind", "0.0.0.0:3000",
-        "--workers", "1",
+        "--reuse-port",
         "--reload",
         "flask_proxy_extended:app"
     ]
     
-    # Run the command
+    logger.info(f"Starting extended proxy server with command: {' '.join(cmd)}")
+    
+    # Execute the server
     try:
-        process = subprocess.run(cmd)
-        return process.returncode
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
     except Exception as e:
-        logger.error(f"Error starting extended proxy server: {e}")
-        return 1
+        logger.error(f"Error running server: {e}")
+        raise
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
