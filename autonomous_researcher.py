@@ -15,6 +15,7 @@ import time
 import logging
 import requests
 import re
+import os
 from typing import Dict, List, Any, Optional, Tuple
 
 # Configure logging
@@ -46,7 +47,7 @@ class AutonomousResearcher:
     
     def _call_gemini(self, prompt: str, priority: str = "low") -> Dict[str, Any]:
         """
-        Call the Gemini API with retry logic for rate limits.
+        Call the Gemini API with retry logic for rate limits and model fallback.
         
         Args:
             prompt: The prompt to send
@@ -58,36 +59,91 @@ class AutonomousResearcher:
         max_retries = 3
         retry_delay = 3  # seconds
         
-        for attempt in range(max_retries):
-            try:
-                url = f"{self.base_url}/gemini"
-                response = requests.post(
-                    url,
-                    json={"prompt": prompt, "priority": priority},
-                    headers={"Content-Type": "application/json"}
-                )
-                
-                result = response.json()
-                
-                # Check if we hit a rate limit (based on error message)
-                if "error" in result.get("response", "").lower() and "quota" in result.get("response", "").lower():
-                    logger.warning(f"API rate limit hit, attempt {attempt+1}/{max_retries}")
+        # Define model tiers for fallback
+        model_tiers = [
+            {"model": "gemini-1.5-pro", "name": "Gemini 1.5 Pro"},  # Default, most capable
+            {"model": "gemini-1.0-pro", "name": "Gemini 1.0 Pro"},  # Fallback 1
+            {"model": "gemini-1.0-flash", "name": "Gemini 1.0 Flash"},  # Fallback 2
+            {"model": "text-bison", "name": "PaLM 2 (text-bison)"}  # Last resort
+        ]
+        
+        # Try each model tier until successful or all tiers exhausted
+        for model_tier in model_tiers:
+            model_name = model_tier["name"]
+            model = model_tier["model"]
+            
+            logger.info(f"Attempting request with model: {model_name}")
+            
+            for attempt in range(max_retries):
+                try:
+                    url = f"{self.base_url}/gemini"
+                    response = requests.post(
+                        url,
+                        json={
+                            "prompt": prompt, 
+                            "priority": priority,
+                            "model": model  # Specify which model to use
+                        },
+                        headers={"Content-Type": "application/json"}
+                    )
+                    
+                    result = response.json()
+                    
+                    # If successful response without quota error, return it
+                    if "response" in result and not (
+                        "error" in result.get("response", "").lower() and 
+                        "quota" in result.get("response", "").lower()
+                    ):
+                        logger.info(f"Request successful with model: {model_name}")
+                        # Add which model was used to the response
+                        result["model_used"] = model_name
+                        return result
+                    
+                    # If we hit a rate limit, try waiting before trying the same model again
+                    if "error" in result.get("response", "").lower() and "quota" in result.get("response", "").lower():
+                        logger.warning(f"API rate limit hit with {model_name}, attempt {attempt+1}/{max_retries}")
+                        if attempt < max_retries - 1:
+                            logger.info(f"Waiting {retry_delay} seconds before retry with same model")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            continue
+                        else:
+                            # After max retries with current model, break to try next tier
+                            logger.warning(f"Max retries exceeded with {model_name}, trying next model tier")
+                            break
+                    
+                except Exception as e:
+                    logger.error(f"Error calling API with {model_name} (attempt {attempt+1}/{max_retries}): {e}")
                     if attempt < max_retries - 1:
                         logger.info(f"Waiting {retry_delay} seconds before retry")
                         time.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
-                        continue
-                
+                    else:
+                        # After max retries with current model, break to try next tier
+                        logger.warning(f"Max retries exceeded with {model_name} due to errors, trying next model tier")
+                        break
+        
+        # If we reach here, all model tiers have failed
+        # Try anthropic fallback if available
+        try:
+            logger.info("All Google AI models failed, attempting fallback to Anthropic Claude")
+            url = f"{self.base_url}/anthropic"
+            response = requests.post(
+                url,
+                json={"prompt": prompt},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            result = response.json()
+            if "response" in result:
+                logger.info("Request successful with Anthropic Claude fallback")
+                result["model_used"] = "Anthropic Claude (fallback)"
                 return result
-                
-            except Exception as e:
-                logger.error(f"Error calling Gemini API (attempt {attempt+1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Waiting {retry_delay} seconds before retry")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                
-        return {"status": "error", "response": "Failed after multiple attempts"}
+        except Exception as e:
+            logger.error(f"Error with Anthropic fallback: {e}")
+            
+        # If we reach here, all models including fallbacks have failed
+        return {"status": "error", "response": "Failed after trying all model tiers", "model_used": "none"}
     
     def _web_search(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
         """
