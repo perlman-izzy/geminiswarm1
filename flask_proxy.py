@@ -9,38 +9,20 @@ import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 
+# Import configuration from config.py
+from config import (
+    API_KEYS, DEFAULT_MODELS, SAFETY_SETTINGS, 
+    GENERATION_CONFIG, MAIN_PROXY_PORT, LOG_FORMAT
+)
+
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "default-secret-key")
 
-# Get API keys from environment variables (new keys provided by user)
-API_KEYS = [
-    # Fresh API keys provided by the user
-    "AIzaSyCcqC_3qZjfunJmEVDwH25cYiT6EoyVCqA",
-    "AIzaSyAqsSH2B0ZrFrBqcs7QJZle6hFlx9O3zC4",
-    "AIzaSyDcf_j8sk-gQK_z3QRupDOBxSQbzGPPwbs",
-    "AIzaSyAF66TFgv2o_BNNNXTt4IPNz38Zf0CcfR4",
-    "AIzaSyBPizTLUOcA_Gx27aeQ9E0KSKgAePNfERM",
-    "AIzaSyDn4whqPnQVnLCeqE42lWwdRoDahTC_9vc",
-    "AIzaSyB5nL_8t7sOpfnRaEs0-FldlqXoFCkEcbA",
-    "AIzaSyC6wrXb9L4yJTqFo21HjTwTgnlNPl-m4pU",
-    "AIzaSyB7hWAfS1EoH3pdXGHP6DVQkJsGqhlW1k8",
-    "AIzaSyCxjnfVbSr2xTkyEqll_p9CH-QrlToBV8g",
-    "AIzaSyDQ7_nCuQ4G8bDRUm9zF630qKrzpWzNA74",
-    "AIzaSyDiIEjcIu2BiLdx-p5c_tNdi80cq1awn6w",
-    # Environment variable keys
-    os.environ.get("GEMINI_API_KEY"),
-    os.environ.get("GOOGLE_API_KEY1"),
-    os.environ.get("GOOGLE_API_KEY2"),
-    os.environ.get("GOOGLE_API_KEY3"),
-]
-
-# Remove any None or empty values from API_KEYS
-API_KEYS = [key for key in API_KEYS if key]
+# API keys are loaded from config.py
 
 logger.info(f"Loaded {len(API_KEYS)} API keys for rotation")
 

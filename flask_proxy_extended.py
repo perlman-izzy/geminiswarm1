@@ -10,6 +10,25 @@ import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 
+# Configure Google Generative AI with appropriate imports from newer SDK
+try:
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    # Set up safety settings with the new API format
+    SAFETY_SETTINGS = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+    }
+except ImportError:
+    # Fallback for older versions of the SDK
+    SAFETY_SETTINGS = {
+        "HARASSMENT": "BLOCK_NONE",
+        "HATE": "BLOCK_NONE",
+        "SEXUAL": "BLOCK_NONE",
+        "DANGEROUS": "BLOCK_NONE",
+    }
+
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -103,17 +122,10 @@ def call_gemini():
                         logger.debug(f"Trying model: {model_name}")
                         logger.debug(f"Sending prompt: {prompt[:50]}...")
                         
-                        # Safety settings to minimize filtering
-                        safety_settings = {
-                            "HARASSMENT": "BLOCK_NONE",
-                            "HATE": "BLOCK_NONE",
-                            "SEXUAL": "BLOCK_NONE",
-                            "DANGEROUS": "BLOCK_NONE",
-                        }
-                        
+                        # Use the global safety settings
                         response = model.generate_content(
                             prompt, 
-                            safety_settings=safety_settings,
+                            safety_settings=SAFETY_SETTINGS,
                             generation_config={"temperature": 0.7, "max_output_tokens": 1000}
                         )
                         
