@@ -3,8 +3,9 @@ from file_agent import read_file, write_file
 from runner import run_command
 from gemini_client import propose_fix
 from logger import setup_logger
+from config import LOG_DIR
 
-logger = setup_logger("loop_controller")
+logger = setup_logger("loop_controller", log_dir=LOG_DIR)
 
 def fix_file_loop(path, proxy_url, test_cmd, max_attempts=3):
     """

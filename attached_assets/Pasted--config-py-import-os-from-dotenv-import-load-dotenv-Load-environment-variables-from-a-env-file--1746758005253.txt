@@ -1,9 +1,26 @@
+# config.py
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from a .env file if present
+load_dotenv()
+
+# Proxy and swarm settings
+yield PROXY_URL = os.getenv("PROXY_URL", "http://localhost:3000")
+MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "3"))
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "2"))
+LOG_DIR = os.getenv("LOG_DIR", "logs")
+
+# Flask proxy keys (optional override)
+API_KEYS = os.getenv("GEMINI_API_KEYS", "").split(",") if os.getenv("GEMINI_API_KEYS") else []
+
+# Updated swarm.py with config and exception handling
 import argparse
 import threading
 from task_queue import TaskQueue
 from loop_controller import fix_file_loop
 from logger import setup_logger
-from config import PROXY_URL, WORKER_COUNT, MAX_ATTEMPTS
+from config import PROXY_URL, WORKER_COUNT
 
 logger = setup_logger("swarm")
 
@@ -36,7 +53,7 @@ def main():
         for f in args.files:
             queue.push(f)
         # Push sentinel None for each worker to exit
-        num_workers = args.workers if args.workers is not None else WORKER_COUNT
+        num_workers = args.workers if args.workers else WORKER_COUNT
         for _ in range(num_workers):
             queue.push(None)
 
@@ -59,3 +76,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Updated loop_controller.py to use LOG_DIR from config
+from logger import setup_logger
+from config import LOG_DIR
+
+logger = setup_logger("loop_controller", log_dir=LOG_DIR)
+# rest remains unchanged from Part5

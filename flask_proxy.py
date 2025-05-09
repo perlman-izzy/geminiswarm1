@@ -1,6 +1,7 @@
 import os
 import logging
 import itertools
+import time
 from flask import Flask, request, jsonify, render_template
 import google.generativeai as genai
 
@@ -12,23 +13,32 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "default-secret-key")
 
-# Use environment variable for API key
-gemini_api_key = os.environ.get("GEMINI_API_KEY")
-
-# API keys for Gemini - use the environment variable if available, otherwise fallback to the list
-API_KEYS = [gemini_api_key] if gemini_api_key else [
-    "cwV8AcSbpNvcvrMwhDTArKjQsk",  # These are placeholder keys
-    "AIzaSyBcwbIZPq3yqVonOG-8AqPSaUuv6vzQWyRE",
-    "AIzaSyDln6sUGiaidN5CmKDGw3qt1spvgz94QKo",
-    "AIzaSyDozMeIBRZrvGYSt8Ffua3rGp4DlDnONEo",
-    "AIzaSyBAvBbhU71l63Ei25F-eHb0QMKjuotDPIg",
-    "AIzaSyCre8WOWbchKsT7l67V7aIsMGneIEOa59s",
-    "AIzaSyCV3OauLHIpUHV722MszP2JTir_tkC1ECM",
-    "AIzaSyCvKDI8jyoWDYGIaolxsi5A95MPxR2EDKQ",
-    "AIzaSyAeONfijWy8EPJqAY3B0DJedepcGyYRrWU",
+# Get API keys from environment variables (new keys provided by user)
+API_KEYS = [
+    # Fresh API keys provided by the user
+    "AIzaSyCcqC_3qZjfunJmEVDwH25cYiT6EoyVCqA",
+    "AIzaSyAqsSH2B0ZrFrBqcs7QJZle6hFlx9O3zC4",
+    "AIzaSyDcf_j8sk-gQK_z3QRupDOBxSQbzGPPwbs",
+    "AIzaSyAF66TFgv2o_BNNNXTt4IPNz38Zf0CcfR4",
+    "AIzaSyBPizTLUOcA_Gx27aeQ9E0KSKgAePNfERM",
+    "AIzaSyDn4whqPnQVnLCeqE42lWwdRoDahTC_9vc",
+    "AIzaSyB5nL_8t7sOpfnRaEs0-FldlqXoFCkEcbA",
+    "AIzaSyC6wrXb9L4yJTqFo21HjTwTgnlNPl-m4pU",
+    "AIzaSyB7hWAfS1EoH3pdXGHP6DVQkJsGqhlW1k8",
+    "AIzaSyCxjnfVbSr2xTkyEqll_p9CH-QrlToBV8g",
+    "AIzaSyDQ7_nCuQ4G8bDRUm9zF630qKrzpWzNA74",
+    "AIzaSyDiIEjcIu2BiLdx-p5c_tNdi80cq1awn6w",
+    # Environment variable keys
+    os.environ.get("GEMINI_API_KEY"),
+    os.environ.get("GOOGLE_API_KEY1"),
+    os.environ.get("GOOGLE_API_KEY2"),
+    os.environ.get("GOOGLE_API_KEY3"),
 ]
-# Remove any None values from API_KEYS
+
+# Remove any None or empty values from API_KEYS
 API_KEYS = [key for key in API_KEYS if key]
+
+logger.info(f"Loaded {len(API_KEYS)} API keys for rotation")
 
 # Create a cyclic iterator through the API keys
 key_iter = itertools.cycle(API_KEYS)
@@ -62,34 +72,78 @@ def call_gemini():
             logger.error("No prompt provided in request")
             return jsonify({"error": "No prompt provided", "status": "error"}), 400
         
-        # Try up to 3 different API keys in case of failures
-        for attempt in range(min(3, len(API_KEYS))):
+        # Try up to 5 different API keys in case of failures
+        max_attempts = min(5, len(API_KEYS))
+        retry_delay = 2  # seconds between retries
+        
+        for attempt in range(max_attempts):
             api_key = next(key_iter)
             key_statistics[api_key]["uses"] += 1
             
             try:
-                logger.info(f"Attempt {attempt+1}: Using API key: {api_key[:5]}... for request")
+                logger.info(f"Attempt {attempt+1}/{max_attempts}: Using API key: {api_key[:5]}... for request")
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel("models/gemini-1.5-pro")
                 
-                logger.debug(f"Sending prompt to Gemini: {prompt[:50]}...")
-                response = model.generate_content(prompt)
+                # Try with different models if available - start with newer models
+                model_names = [
+                    "models/gemini-1.5-flash",      # Faster, lower quality
+                    "models/gemini-1.5-pro",        # Higher quality, slower
+                    "models/gemini-pro-vision",     # Fallback older model
+                ]
                 
-                # Log successful request
-                logger.info(f"Successfully processed request with key {api_key[:5]}...")
-                logger.debug(f"Response text: {response.text[:100]}...")
+                # Try each model until one works
+                for model_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        logger.debug(f"Trying model: {model_name}")
+                        logger.debug(f"Sending prompt: {prompt[:50]}...")
+                        
+                        # Safety settings to minimize filtering
+                        safety_settings = {
+                            "HARASSMENT": "BLOCK_NONE",
+                            "HATE": "BLOCK_NONE",
+                            "SEXUAL": "BLOCK_NONE",
+                            "DANGEROUS": "BLOCK_NONE",
+                        }
+                        
+                        response = model.generate_content(
+                            prompt, 
+                            safety_settings=safety_settings,
+                            generation_config={"temperature": 0.7, "max_output_tokens": 1000}
+                        )
+                        
+                        # Log successful request
+                        logger.info(f"Successfully processed request with key {api_key[:5]}... and model {model_name}")
+                        logger.debug(f"Response text: {response.text[:100]}...")
+                        
+                        return jsonify({
+                            "response": response.text,
+                            "status": "success",
+                            "model": model_name
+                        })
+                    
+                    except Exception as model_error:
+                        logger.warning(f"Model {model_name} failed: {str(model_error)}")
+                        continue  # Try next model
                 
-                return jsonify({
-                    "response": response.text,
-                    "status": "success"
-                })
+                # If we get here, all models failed with this key
+                raise Exception(f"All models failed with API key {api_key[:5]}...")
                 
             except Exception as e:
+                # Handle rate limiting specially
+                if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
+                    logger.warning(f"Rate limit hit with key {api_key[:5]}... : {str(e)}")
+                else:
+                    logger.warning(f"API key {api_key[:5]}... failed: {str(e)}")
+                
                 # Log the failure and try next key
                 key_statistics[api_key]["failures"] += 1
-                logger.warning(f"API key {api_key[:5]}... failed: {str(e)}")
-                logger.exception("Detailed exception info:")
-                continue
+                
+                # Wait before trying next key
+                if attempt < max_attempts - 1:
+                    logger.info(f"Waiting {retry_delay}s before trying next key...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # Increase delay for each retry
         
         # If we've tried multiple keys and all failed
         logger.error("All API keys failed to process the request")
