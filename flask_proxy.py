@@ -70,7 +70,7 @@ def call_gemini():
             try:
                 logger.info(f"Attempt {attempt+1}: Using API key: {api_key[:5]}... for request")
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel("gemini-pro")
+                model = genai.GenerativeModel("models/gemini-1.5-pro")
                 
                 logger.debug(f"Sending prompt to Gemini: {prompt[:50]}...")
                 response = model.generate_content(prompt)
