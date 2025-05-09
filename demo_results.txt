@@ -1,0 +1,42 @@
+
+================================================================================
+Research System Demo
+================================================================================
+Query: Find piano bars in San Francisco
+Starting demonstration research...
+
+
+================================================================================
+Research completed in 6.70 seconds
+================================================================================
+
+ANSWER:
+Found 3 piano bars in San Francisco including Bix, Martuni's, Mr. Tipple's Jazz Club. Key information: Piano bars in San Francisco, also known as piano lounges, feature live piano music played by professional musicians.
+
+VENUES FOUND:
+
+- Bix
+  * Bix: Old-school American restaurant centered around a grand piano, nightly schedule of solo pianists and jazz duos or trios.
+  * Bix: Jackson Square (Specific address not provided)
+
+- Martuni's
+  * Martuni's: Patrons sing show tunes, large specialty martinis, cabaret atmosphere, incredible martini selection
+  * Martuni's: 4 Valencia St, San Francisco, CA 94103, United States
+
+- Mr. Tipple's Jazz Club
+  * Mr. Tipple's Jazz Club: Jazz music with a speakeasy era atmosphere, flapper dresses and sports coats, dim sum menu (shrimp siu mai, chicken wontons, XLB).
+  * Mr. Tipple's Jazz Club: Civic Center (Specific address not provided)
+
+KEY FACTS:
+- Piano bars in San Francisco, also known as piano lounges, feature live piano music played by professional musicians.
+- The atmosphere can range from intimate to lively.
+- Billy Joel's "Piano Man" is a frequently played song in San Francisco piano bars.
+- Many establishments offer food and drinks alongside live music in a less crowded setting.
+- Martuni's is described as the only true piano bar in the city, known for its martinis and cabaret atmosphere.
+
+LIMITATIONS:
+- Limited search scope for demonstration
+
+RESEARCH METADATA:
+- URLs visited: 2
+- Search terms used: 1
