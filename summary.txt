@@ -1,0 +1,3 @@
+"Learn how quantum computing could transform various industries, such as artificial intelligence, finance, and cybersecurity. Explore the challenges and opportunities of quantum computing, and the companies leading the way in this field."
+"Learn how quantum computing can impact businesses in optimization, research, cryptography and industry-specific domains. Explore examples of quantum computing platforms, partners and timelines for different applications."
+"Explore Quantum Computing applications! Learn what Quantum Computing is and discover the top 10 Applications of Quantum Computing across industries."
