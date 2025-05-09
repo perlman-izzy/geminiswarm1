@@ -27,6 +27,7 @@ GEMINI_API_KEYS: List[str] = [
     os.environ.get("GOOGLE_API_KEY2", "AIzaSyCg2reIDH1OrR6TGNUCEycpAsz7XcZ0ckg"),
     os.environ.get("GOOGLE_API_KEY3", "AIzaSyB_BvGdX_M0pwhOa1-rHteRexm2pEG8y8I"),
     os.environ.get("GEMINI_API_KEY", ""),
+    # Original keys that have been confirmed to work
     "AIzaSyDve6IOaFFD1VFEpm_Con-VA5ur37yYqC8",
     "AIzaSyCI5RP4-iCVOaC2MUYg-_mzJOpgXc7kvtY",
     "AIzaSyBEsgXakfjHf-tPaHwgAgfe4D3meMjQF-Y",
