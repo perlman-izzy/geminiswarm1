@@ -185,11 +185,13 @@ def get_stats():
 def web_search():
     data = request.get_json() or {}
     query = data.get('query', '')
+    max_results = data.get('max_results', 20)
     if not query:
         return jsonify({'error': 'Missing query'}), 400
     try:
-        # Using duckduckgo_search library
-        results = ddg(query, max_results=20)
+        # Using duckduckgo_search library with DDGS class
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
         return jsonify({'results': results})
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
