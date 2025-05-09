@@ -182,6 +182,33 @@ class SwarmController:
             logger.info(f"Added low priority task: {task}")
         
         return task.id
+        
+    def add_prompt_task(self, prompt: str, priority: TaskPriority = TaskPriority.LOW) -> str:
+        """Add a simple prompt task and return its ID."""
+        task = Task(
+            task_type=TaskType.PROMPT,
+            data={"prompt": prompt},
+            priority=priority
+        )
+        return self.add_task(task)
+    
+    def add_web_search_task(self, query: str, max_results: int = 5) -> str:
+        """Add a web search task and return its ID."""
+        task = Task(
+            task_type=TaskType.WEB_SEARCH,
+            data={"query": query, "max_results": max_results},
+            priority=TaskPriority.LOW
+        )
+        return self.add_task(task)
+    
+    def add_code_fix_task(self, file_path: str, test_command: str = "python -m unittest") -> str:
+        """Add a code fixing task and return its ID."""
+        task = Task(
+            task_type=TaskType.CODE_FIX,
+            data={"file_path": file_path, "test_command": test_command},
+            priority=TaskPriority.HIGH
+        )
+        return self.add_task(task)
     
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
         """Get the status of a task by its ID."""

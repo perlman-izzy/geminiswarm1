@@ -1,190 +1,140 @@
 #!/usr/bin/env python3
 """
-Script to start both the original and extended Gemini proxy servers simultaneously.
-This allows for full functionality of the multi-agent swarm system.
+Workflow script to start both proxy servers.
 """
 import os
 import sys
 import time
+import signal
 import logging
 import subprocess
 import threading
-import signal
 
 # Configure logging
-logging.basicConfig(level=logging.INFO,
-                  format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("start_dual_proxies")
 
-# Define server info
-SERVERS = [
-    {
-        "name": "Main Proxy",
-        "module": "main:app",
-        "port": 5000,
-        "process": None,
-    },
-    {
-        "name": "Extended Proxy",
-        "script": "flask_proxy_extended.py",
-        "port": 3000,
-        "process": None,
-    }
-]
-
-# Flag to indicate when shutdown is requested
-shutdown_requested = False
+# Global processes to track
+processes = []
 
 def signal_handler(sig, frame):
-    """Handle Ctrl+C and other termination signals."""
-    global shutdown_requested
-    logger.info("Shutdown signal received, stopping servers...")
-    shutdown_requested = True
+    """Handle signals gracefully."""
+    logger.info("Shutting down proxy servers...")
+    for proc in processes:
+        if proc and proc.poll() is None:
+            proc.terminate()
+    sys.exit(0)
 
-def run_gunicorn(module, port, log_prefix):
-    """Run a Flask app using Gunicorn."""
+def run_proxy(name, module_app, port):
+    """Run a proxy server using Gunicorn."""
     cmd = [
         "gunicorn",
         "--bind", f"0.0.0.0:{port}",
-        "--reuse-port",
+        "--workers", "1",
         "--reload",
-        module
+        module_app
     ]
-    
-    logger.info(f"Starting {log_prefix} on port {port} with command: {' '.join(cmd)}")
+    logger.info(f"Starting {name} on port {port}")
     
     try:
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1
+            text=True,
+            bufsize=1,
+            universal_newlines=True
         )
+        processes.append(process)
         
-        # Store the process in the server info
-        for server in SERVERS:
-            if server.get("module") == module:
-                server["process"] = process
-                break
+        # Create a thread to log output
+        def log_output():
+            if process.stdout is not None:
+                for line in iter(process.stdout.readline, ''):
+                    logger.info(f"{name}: {line.strip()}")
         
-        # Print output with prefix in real-time
-        prefix = f"[{log_prefix}] "
-        for line in process.stdout:
-            if not shutdown_requested:
-                print(prefix + line, end='')
-            else:
-                break
-                
-        # Process terminated
-        return_code = process.wait()
-        logger.info(f"{log_prefix} exited with code {return_code}")
-    
+        thread = threading.Thread(target=log_output, daemon=True)
+        thread.start()
+        
+        return process
     except Exception as e:
-        logger.exception(f"Error running {log_prefix}: {e}")
+        logger.error(f"Error starting {name}: {e}")
+        return None
 
-def run_python_script(script_path, log_prefix):
-    """Run a Python script directly."""
-    cmd = [sys.executable, script_path]
+def check_ports_available(ports, timeout=30):
+    """Check if ports are available."""
+    import socket
     
-    logger.info(f"Starting {log_prefix} with command: {' '.join(cmd)}")
+    deadline = time.time() + timeout
+    ports_status = {port: False for port in ports}
     
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1
-        )
+    while time.time() < deadline:
+        for port in ports:
+            if not ports_status[port]:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    s.connect(("localhost", port))
+                    ports_status[port] = True
+                except:
+                    pass
+                finally:
+                    s.close()
         
-        # Store the process in the server info
-        for server in SERVERS:
-            if server.get("script") == os.path.basename(script_path):
-                server["process"] = process
-                break
+        if all(ports_status.values()):
+            return True
         
-        # Print output with prefix in real-time
-        prefix = f"[{log_prefix}] "
-        for line in process.stdout:
-            if not shutdown_requested:
-                print(prefix + line, end='')
-            else:
-                break
-                
-        # Process terminated
-        return_code = process.wait()
-        logger.info(f"{log_prefix} exited with code {return_code}")
+        # Wait before retrying
+        time.sleep(1)
     
-    except Exception as e:
-        logger.exception(f"Error running {log_prefix}: {e}")
+    # Timeout reached
+    logger.error(f"Timed out waiting for ports: {[p for p, s in ports_status.items() if not s]}")
+    return False
 
 def main():
-    """Start both proxy servers and monitor them."""
-    # Set up signal handling for graceful shutdown
+    """Start both proxy servers."""
+    # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Get the directory of this script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up one level to the project root
-    root_dir = os.path.dirname(script_dir)
+    # Start main proxy on port 5000
+    main_proxy = run_proxy("Main Proxy", "flask_proxy:app", 5000)
     
-    # Start server threads
-    threads = []
+    # Start extended proxy on port 3000
+    extended_proxy = run_proxy("Extended Proxy", "flask_proxy_extended:app", 3000)
     
-    # Start main proxy with gunicorn
-    main_proxy_thread = threading.Thread(
-        target=run_gunicorn,
-        args=(SERVERS[0]["module"], SERVERS[0]["port"], SERVERS[0]["name"]),
-        daemon=True
-    )
-    threads.append(main_proxy_thread)
-    main_proxy_thread.start()
+    # Check if both proxies started successfully
+    if main_proxy is None or extended_proxy is None:
+        logger.error("Failed to start one or more proxy servers")
+        signal_handler(None, None)
+        return 1
     
-    # Start extended proxy directly with Python
-    extended_proxy_path = os.path.join(root_dir, SERVERS[1]["script"])
-    extended_proxy_thread = threading.Thread(
-        target=run_python_script,
-        args=(extended_proxy_path, SERVERS[1]["name"]),
-        daemon=True
-    )
-    threads.append(extended_proxy_thread)
-    extended_proxy_thread.start()
+    # Wait for ports to be available
+    if not check_ports_available([5000, 3000]):
+        logger.error("Proxy servers failed to start properly")
+        signal_handler(None, None)
+        return 1
     
-    # Wait a moment for servers to start
-    time.sleep(3)
+    logger.info("All proxy servers running successfully")
     
-    logger.info("Both proxy servers should now be running.")
-    logger.info(f"Main Proxy available at: http://localhost:{SERVERS[0]['port']}")
-    logger.info(f"Extended Proxy available at: http://localhost:{SERVERS[1]['port']}")
-    logger.info("Press Ctrl+C to shut down both servers.")
-    
-    # Keep the main thread alive until shutdown is requested
+    # Keep running
     try:
-        while not shutdown_requested:
-            # Check if any thread has exited unexpectedly
-            if not all(thread.is_alive() for thread in threads):
-                logger.error("One or more servers has stopped unexpectedly.")
-                # Try to restart
-                break
+        while all(p.poll() is None for p in processes):
             time.sleep(1)
+        
+        # If we get here, a process died
+        for i, p in enumerate(processes):
+            if p.poll() is not None:
+                logger.error(f"Process {i} exited with code {p.returncode}")
+        
+        return 1
     except KeyboardInterrupt:
-        # This should be caught by the signal handler, but just in case
-        logger.info("Interrupt received, shutting down...")
+        logger.info("Interrupted by user")
+    finally:
+        signal_handler(None, None)
     
-    # Shut down all processes
-    for server in SERVERS:
-        if server.get("process") and server["process"].poll() is None:
-            logger.info(f"Stopping {server['name']}...")
-            server["process"].terminate()
-            try:
-                server["process"].wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logger.warning(f"{server['name']} did not terminate gracefully, killing it.")
-                server["process"].kill()
-    
-    logger.info("All servers stopped.")
     return 0
 
 if __name__ == "__main__":
