@@ -15,10 +15,18 @@ from typing import Dict, List, Any, Optional, Union, Tuple
 from flask import Flask, request, jsonify, render_template, redirect, url_for
 
 # Import from config
-from config import LOG_DIR, API_KEYS, GEMINI_MODELS
+from config import (
+    LOG_DIR, API_KEYS, GEMINI_API_KEYS, GEMINI_MODELS, 
+    OPENAI_MODELS, ANTHROPIC_MODELS,
+    OPENAI_API_KEY, ANTHROPIC_API_KEY
+)
 
 # For extended proxy functionality
 import google.generativeai as genai
+
+# Import other provider helpers (optional fallbacks)
+from openai_helper import generate_with_openai
+from anthropic_helper import generate_with_anthropic
 from duckduckgo_search import DDGS
 import wikipedia
 from pytrends.request import TrendReq
@@ -80,11 +88,21 @@ def index():
 @app.route('/status')
 def status():
     """Return the status of the system."""
+    gemini_available = len([k for k in GEMINI_API_KEYS if k]) > 0
+    openai_available = bool(OPENAI_API_KEY)
+    anthropic_available = bool(ANTHROPIC_API_KEY)
+    
     return jsonify({
         "status": "ok",
-        "api_keys_available": len([k for k in API_KEYS if k]),
+        "api_keys_available": {
+            "gemini": len([k for k in GEMINI_API_KEYS if k]),
+            "openai": openai_available,
+            "anthropic": anthropic_available
+        },
         "services": {
-            "gemini": True,
+            "gemini": gemini_available,
+            "openai": openai_available,
+            "anthropic": anthropic_available,
             "web_search": True,
             "wikipedia": True,
             "news": True,
@@ -963,8 +981,52 @@ def call_gemini_with_model_selection(
                 # Other errors, sleep and retry
                 time.sleep(1)  # Sleep to prevent overloading the API
     
-    # If we reach here, all models and attempts failed
-    result["response"] = "Failed to get a response from any available model"
+    # If all Gemini models failed, try OpenAI fallback
+    if OPENAI_API_KEY:
+        logger.info("All Gemini models failed, trying OpenAI fallback")
+        try:
+            # Try OpenAI with appropriate model based on priority
+            openai_model = OPENAI_MODELS["primary"] if priority.lower() == "high" else OPENAI_MODELS["economy"]
+            openai_result = generate_with_openai(
+                prompt=prompt,
+                model_name=openai_model,
+                temperature=0.7,
+                max_tokens=4096
+            )
+            
+            if openai_result["status"] == "success":
+                logger.info(f"Successfully generated content with OpenAI {openai_model}")
+                return openai_result
+            else:
+                logger.warning(f"OpenAI fallback failed: {openai_result['response']}")
+                
+        except Exception as e:
+            logger.error(f"Error during OpenAI fallback: {e}")
+    
+    # If OpenAI failed or isn't configured, try Anthropic fallback
+    if ANTHROPIC_API_KEY:
+        logger.info("Trying Anthropic fallback")
+        try:
+            # Try Anthropic with appropriate model based on priority
+            anthropic_model = ANTHROPIC_MODELS["primary"] if priority.lower() == "high" else ANTHROPIC_MODELS["economy"]
+            anthropic_result = generate_with_anthropic(
+                prompt=prompt,
+                model_name=anthropic_model,
+                temperature=0.7,
+                max_tokens=4096
+            )
+            
+            if anthropic_result["status"] == "success":
+                logger.info(f"Successfully generated content with Anthropic {anthropic_model}")
+                return anthropic_result
+            else:
+                logger.warning(f"Anthropic fallback failed: {anthropic_result['response']}")
+                
+        except Exception as e:
+            logger.error(f"Error during Anthropic fallback: {e}")
+    
+    # If we reach here, all providers and models failed
+    result["response"] = "Failed to get a response from all available providers (Gemini, OpenAI, Anthropic)"
     return result
 
 @app.route('/proxy')
@@ -987,11 +1049,17 @@ if __name__ == "__main__":
     logger.info("Starting Multi-Agent Gemini AI System")
     
     # Check API keys
-    api_keys_count = len([k for k in API_KEYS if k])
-    if api_keys_count == 0:
-        logger.warning("No API keys available! Please set GOOGLE_API_KEY1, GOOGLE_API_KEY2, GOOGLE_API_KEY3, or GEMINI_API_KEY")
+    gemini_keys_count = len([k for k in GEMINI_API_KEYS if k])
+    if gemini_keys_count == 0:
+        logger.warning("No Gemini API keys available! Please set GOOGLE_API_KEY1, GOOGLE_API_KEY2, GOOGLE_API_KEY3, or GEMINI_API_KEY")
     else:
-        logger.info(f"Found {api_keys_count} API keys")
+        logger.info(f"Found {gemini_keys_count} Gemini API keys")
+        
+    # Check other provider keys (optional)
+    if OPENAI_API_KEY:
+        logger.info("OpenAI API key available for fallback")
+    if ANTHROPIC_API_KEY:
+        logger.info("Anthropic API key available for fallback")
     
     # Start the Flask app
     app.run(host="0.0.0.0", port=5000, debug=True)
