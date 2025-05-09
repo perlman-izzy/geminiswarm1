@@ -145,60 +145,205 @@ class AutonomousResearcher:
         # If we reach here, all models including fallbacks have failed
         return {"status": "error", "response": "Failed after trying all model tiers", "model_used": "none"}
     
-    def _web_search(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
+    def _web_search(self, query: str, max_results: int = 10, max_retries: int = 3, initial_backoff: float = 1.0) -> List[Dict[str, str]]:
         """
-        Perform a web search.
+        Perform a web search with retry logic and error handling.
         
         Args:
             query: Search query
             max_results: Maximum number of results
+            max_retries: Maximum number of retry attempts (default: 3)
+            initial_backoff: Initial backoff time in seconds (default: 1.0)
             
         Returns:
             List of search results
         """
-        try:
-            url = f"{self.base_url}/web_search"
-            response = requests.post(
-                url,
-                json={"query": query, "max_results": max_results},
-                headers={"Content-Type": "application/json"}
-            )
-            results = response.json().get("results", [])
-            self.research_state["searched_terms"].append(query)
-            logger.info(f"Web search for '{query}' found {len(results)} results")
-            return results
-        except Exception as e:
-            logger.error(f"Error in web search: {e}")
+        # Check if query is valid
+        if not query or len(query.strip()) < 3:
+            logger.warning(f"Query too short or invalid: '{query}'")
             return []
+            
+        # Check if we've already searched this term
+        if query in self.research_state["searched_terms"]:
+            logger.info(f"Already searched for '{query}', using cached results")
+            # In a full implementation, we would cache results
+            # Here we'll just proceed with the search again
+            
+        # Initialize retry counter and backoff time
+        retries = 0
+        backoff = initial_backoff
+        last_error = None
+        
+        while retries <= max_retries:
+            try:
+                # If not the first attempt, log that we're retrying
+                if retries > 0:
+                    logger.info(f"Retry attempt {retries}/{max_retries} for search query: '{query}'")
+                
+                # Make the request with a timeout
+                api_url = f"{self.base_url}/web_search"
+                response = requests.post(
+                    api_url,
+                    json={"query": query, "max_results": max_results},
+                    headers={"Content-Type": "application/json"},
+                    timeout=20  # Set a reasonable timeout
+                )
+                
+                # Check for HTTP errors
+                response.raise_for_status()
+                
+                # Get results
+                results = response.json().get("results", [])
+                
+                # Check if we got valid results
+                if results:
+                    self.research_state["searched_terms"].append(query)
+                    logger.info(f"Web search for '{query}' found {len(results)} results")
+                    return results
+                else:
+                    # This may occur when the search API returns no results
+                    logger.warning(f"No results found for query: '{query}'")
+                    # If this is our last retry, return empty list
+                    if retries == max_retries:
+                        self.research_state["searched_terms"].append(query)
+                        return []
+                        
+            except requests.exceptions.Timeout:
+                last_error = "timeout"
+                logger.warning(f"Timeout during web search for query: '{query}'")
+            except requests.exceptions.ConnectionError:
+                last_error = "connection error"
+                logger.warning(f"Connection error during web search for query: '{query}'")
+            except requests.exceptions.HTTPError as e:
+                last_error = f"HTTP error: {e}"
+                logger.warning(f"HTTP error during web search for query: '{query}'. Error: {e}")
+                
+                # If we get rate limited (429) or server error (5xx), we should retry
+                if hasattr(e, 'response') and (e.response.status_code == 429 or 500 <= e.response.status_code < 600):
+                    logger.info(f"Server error {e.response.status_code}, will retry")
+                else:
+                    # For other HTTP errors, it might not help to retry
+                    logger.warning(f"Non-retriable HTTP error, giving up")
+                    return []
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"Unexpected error in web search for query '{query}': {e}")
+            
+            # If we've reached max retries, give up
+            if retries == max_retries:
+                logger.warning(f"Maximum retries ({max_retries}) reached for search query: '{query}'")
+                self.research_state["searched_terms"].append(query)
+                return []
+            
+            # Increment retry counter
+            retries += 1
+            
+            # Implement exponential backoff
+            sleep_time = backoff * (2 ** (retries - 1))  # Exponential growth
+            logger.info(f"Backing off for {sleep_time:.2f} seconds before retry")
+            time.sleep(sleep_time)
+            
+        # This point should only be reached if we exhaust all retries
+        logger.error(f"Failed to get search results after {max_retries} retries. Last error: {last_error}")
+        return []
     
-    def _scrape_url(self, url: str) -> str:
+    def _scrape_url(self, url: str, max_retries: int = 3, initial_backoff: float = 2.0) -> str:
         """
-        Scrape content from a URL.
+        Scrape content from a URL with retry logic and exponential backoff.
         
         Args:
             url: URL to scrape
+            max_retries: Maximum number of retry attempts (default: 3)
+            initial_backoff: Initial backoff time in seconds (default: 2.0)
             
         Returns:
             Scraped text content
         """
-        try:
-            api_url = f"{self.base_url}/scrape_text"
-            response = requests.post(
-                api_url,
-                json={"url": url},
-                headers={"Content-Type": "application/json"}
-            )
-            content = response.json().get("text", "")
-            if "Error fetching URL" not in content:
-                self.research_state["visited_urls"].append(url)
-                logger.info(f"Successfully scraped URL: {url}")
-                return content
-            else:
-                logger.warning(f"Failed to scrape URL: {url}")
-                return ""
-        except Exception as e:
-            logger.error(f"Error scraping URL {url}: {e}")
+        # Check if URL is valid before proceeding
+        if not url or not url.startswith(('http://', 'https://')):
+            logger.warning(f"Invalid URL format: {url}")
             return ""
+            
+        # Remove any trailing slashes or query parameters for checking if already visited
+        base_url = url.split('?')[0].rstrip('/')
+        if base_url in self.research_state["visited_urls"]:
+            logger.info(f"Skipping already visited URL: {url}")
+            return ""
+            
+        # Initialize retry counter and backoff time
+        retries = 0
+        backoff = initial_backoff
+        
+        while retries <= max_retries:
+            try:
+                # If not the first attempt, log that we're retrying
+                if retries > 0:
+                    logger.info(f"Retry attempt {retries}/{max_retries} for URL: {url}")
+                
+                # Make the request with a timeout
+                api_url = f"{self.base_url}/scrape_text"
+                response = requests.post(
+                    api_url,
+                    json={"url": url},
+                    headers={"Content-Type": "application/json"},
+                    timeout=30  # Set a reasonable timeout
+                )
+                
+                # Check for HTTP errors
+                response.raise_for_status()
+                
+                # Parse the response
+                content = response.json().get("text", "")
+                
+                # Check if the content is valid
+                if content and "Error fetching URL" not in content:
+                    # Check if content is too short to be useful (likely an error page)
+                    if len(content.strip()) < 50:
+                        logger.warning(f"Content from {url} is too short to be useful")
+                        return ""
+                        
+                    # Success! Mark URL as visited and return content
+                    self.research_state["visited_urls"].append(base_url)
+                    logger.info(f"Successfully scraped URL: {url} ({len(content)} chars)")
+                    return content
+                else:
+                    error_msg = response.json().get("error", "Unknown error")
+                    logger.warning(f"Failed to scrape URL: {url}. Error: {error_msg}")
+                    
+                    # Check if the error is due to a robots.txt restriction
+                    if "robots.txt" in error_msg.lower():
+                        logger.info(f"URL {url} is blocked by robots.txt, skipping retries")
+                        return ""
+                        
+                    # If it's a 403 (Forbidden) or 429 (Too Many Requests), retrying might not help
+                    if "403" in error_msg or "429" in error_msg:
+                        if retries == max_retries:  # Only log on last retry
+                            logger.warning(f"Access denied for URL {url}, might be rate limited")
+                    
+            except requests.exceptions.Timeout:
+                logger.warning(f"Timeout while fetching URL: {url}")
+            except requests.exceptions.ConnectionError:
+                logger.warning(f"Connection error while fetching URL: {url}")
+            except requests.exceptions.HTTPError as e:
+                logger.warning(f"HTTP error while fetching URL: {url}. Error: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error scraping URL {url}: {e}")
+            
+            # If we've reached max retries, give up
+            if retries == max_retries:
+                logger.warning(f"Maximum retries ({max_retries}) reached for URL: {url}")
+                return ""
+            
+            # Increment retry counter
+            retries += 1
+            
+            # Implement exponential backoff
+            sleep_time = backoff * (2 ** (retries - 1))  # Exponential growth
+            logger.info(f"Backing off for {sleep_time:.2f} seconds before retry")
+            time.sleep(sleep_time)
+        
+        return ""
     
     def _analyze_content(self, content: str, context: str) -> Dict[str, Any]:
         """
