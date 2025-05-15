@@ -120,7 +120,7 @@ Always try to make progress towards completing your goals.
             logger.error(error_msg)
             return error_msg
             
-    def parse_llm_response(self, response: str) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
+    def parse_llm_response(self, response: str) -> Tuple[str, Optional[str], Union[Dict[str, Any], str]]:
         """
         Parse the LLM response to extract thoughts, tool, and tool input.
         
@@ -128,7 +128,8 @@ Always try to make progress towards completing your goals.
             response: Response from the LLM
             
         Returns:
-            Tuple of (thoughts, tool_name, tool_input)
+            Tuple of (thoughts, tool_name, tool_input_or_response)
+            where tool_input_or_response is either a dict (tool input) or str (direct response)
         """
         try:
             # Extract the JSON part of the response
@@ -144,8 +145,8 @@ Always try to make progress towards completing your goals.
             
             thoughts = response_dict.get("thoughts", "")
             tool_name = response_dict.get("tool")
-            tool_input = response_dict.get("tool_input")
-            direct_response = response_dict.get("response")
+            tool_input = response_dict.get("tool_input", {})
+            direct_response = response_dict.get("response", "")
             
             if tool_name:
                 return thoughts, tool_name, tool_input
@@ -154,9 +155,9 @@ Always try to make progress towards completing your goals.
                 
         except Exception as e:
             logger.error(f"Error parsing LLM response: {str(e)}")
-            return "Error in parsing response.", None, {"error": f"Failed to parse response: {str(e)}"}
+            return "Error in parsing response.", None, f"Failed to parse response: {str(e)}"
             
-    def execute_step(self, user_input: str = None) -> str:
+    def execute_step(self, user_input: Optional[str] = None) -> str:
         """
         Execute a single step of the agent.
         
@@ -167,7 +168,7 @@ Always try to make progress towards completing your goals.
             Agent's response
         """
         # Add user input to messages if provided
-        if user_input:
+        if user_input is not None:
             self.add_message("user", user_input)
             
         # Get the system prompt if this is the first message
@@ -182,9 +183,13 @@ Always try to make progress towards completing your goals.
             # Parse the response
             thoughts, tool_name, tool_output = self.parse_llm_response(llm_response)
             
-            if tool_name:
-                # Run the tool
-                tool_result = self.run_tool(tool_name, tool_output)
+            if tool_name is not None:
+                # Run the tool with the tool input (which should be a dict at this point)
+                if isinstance(tool_output, dict):
+                    tool_result = self.run_tool(tool_name, tool_output)
+                else:
+                    # Convert to dict if needed
+                    tool_result = self.run_tool(tool_name, {})
                 
                 # Add the tool execution to the history
                 self.add_message("assistant", llm_response)
@@ -195,7 +200,12 @@ Always try to make progress towards completing your goals.
             else:
                 # Direct response (no tool needed)
                 self.add_message("assistant", llm_response)
-                return tool_output  # This is the direct response
+                
+                # Convert tool_output to string if it's not already
+                if isinstance(tool_output, str):
+                    return tool_output  # This is the direct response
+                else:
+                    return str(tool_output)
                 
         except Exception as e:
             error_msg = f"Error in execute_step: {str(e)}"
