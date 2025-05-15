@@ -17,7 +17,7 @@ MAX_WAIT = 20  # seconds
 
 
 class GeminiProxy(BaseLlm):
-    def __init__(self, model="gemini-1.5-pro", temperature=0.7, max_tokens=4096, 
+    def __init__(self, model="gemini-2.5-pro", temperature=0.7, max_tokens=4096, 
                  top_p=1.0, frequency_penalty=0, presence_penalty=0):
         """
         Initialize the Gemini LLM with the proxy.
@@ -48,7 +48,7 @@ class GeminiProxy(BaseLlm):
     
     def get_models(self) -> List[str]:
         """Get available models."""
-        return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
+        return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
     
     def verify_access_key(self) -> bool:
         """Verify that the access key is valid."""
