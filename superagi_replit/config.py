@@ -15,7 +15,7 @@ RESOURCES_INPUT_ROOT_DIR = "workspace/input/{agent_id}"
 RESOURCES_OUTPUT_ROOT_DIR = "workspace/output/{agent_id}/{agent_execution_id}"
 
 # LLM
-GEMINI_PROXY_URL = "http://localhost:3000/gemini"
+GEMINI_PROXY_URL = "http://localhost:5000/gemini"
 
 # App settings
 ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "superagi_encryption_key")
