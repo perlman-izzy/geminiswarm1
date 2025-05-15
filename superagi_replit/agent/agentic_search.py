@@ -435,6 +435,8 @@ class AgenticSearch:
             if match:
                 json_str = match.group(0)
                 return json.loads(json_str)
+            
+            # If no JSON object was found, return an empty object
             return {}
         except json.JSONDecodeError:
             logger.error(f"Error parsing JSON object from: {text}")
@@ -512,6 +514,76 @@ class AgenticSearch:
         Returns:
             List of synthesized results
         """
+        if not self.search_state["refined_results"]:
+            return []
+            
+        # Prepare all the information we've gathered
+        all_extracted_info = [
+            result.get("extracted_info", {}).get("extracted_text", "")
+            for result in self.search_state["refined_results"]
+            if "extracted_info" in result and "extracted_text" in result.get("extracted_info", {})
+        ]
+        
+        # Generate a comprehensive final synthesis
+        # Join the first 5 sources with newlines
+        collected_info = "\n\n".join(all_extracted_info[:5])
+        
+        prompt = f"""
+        Based on the following collected information, synthesize a complete, detailed
+        and specific response to the original query:
+        
+        ORIGINAL QUERY: {self.search_state["query"]}
+        
+        COLLECTED INFORMATION:
+        {collected_info}
+        
+        Synthesize a comprehensive answer that:
+        1. Directly addresses the query with specific, actionable information
+        2. Includes specific locations, addresses, and contact details when available
+        3. Organizes information in a clear, structured format
+        4. Prioritizes the most relevant and specific information
+        5. Cites sources for key information
+        
+        Format your response as detailed sections, each covering a specific aspect.
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            synthesis_text = response.get("response", "")
+            
+            # Split into logical sections
+            sections = self._split_into_sections(synthesis_text)
+            
+            # If we couldn't split into sections, create one section with all content
+            if not sections:
+                sections = [{
+                    "title": "Results",
+                    "content": synthesis_text
+                }]
+                
+            # Add source information
+            sources = [
+                {"url": result.get("source", "Unknown"), "title": f"Source {i+1}"}
+                for i, result in enumerate(self.search_state["refined_results"][:5])
+            ]
+            
+            # Add sources to the result
+            for section in sections:
+                section["sources"] = sources
+                
+            return sections
+            
+        except Exception as e:
+            logger.error(f"Error synthesizing results: {e}")
+            # Return a simple fallback if synthesis fails
+            return [{
+                "title": "Search Results",
+                "content": "\n\n".join(all_extracted_info[:3]),
+                "sources": [
+                    {"url": result.get("source", "Unknown"), "title": f"Source {i+1}"}
+                    for i, result in enumerate(self.search_state["refined_results"][:3])
+                ]
+            }]
         # Package current state for synthesis
         current_results = self.search_state["refined_results"]
         
