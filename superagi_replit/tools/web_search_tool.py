@@ -203,7 +203,7 @@ class WebSearchTool(BaseTool):
             num_results = min(max(1, num_results), 10)
             
             # First try using the proxy
-            search_url = "http://localhost:3000/search"
+            search_url = "http://localhost:5000/search"
             
             payload = {
                 "query": query,

@@ -52,7 +52,7 @@ class WebScraperTool(BaseTool):
             # First try using the proxy if available
             try:
                 logger.info(f"Attempting to scrape URL: {url}")
-                proxy_url = "http://localhost:3000/scrape"
+                proxy_url = "http://localhost:5000/fetch_url"
                 
                 payload = {
                     "url": url,
@@ -71,6 +71,10 @@ class WebScraperTool(BaseTool):
                 
                 if "text" in result and result["text"]:
                     logger.info(f"Successfully scraped {url} via proxy")
+                    return self._format_scraped_content(result["text"], url)
+                elif "status_code" in result and "text" in result and result["text"]:
+                    # Handle fetch_url endpoint format
+                    logger.info(f"Successfully scraped {url} via proxy with status {result['status_code']}")
                     return self._format_scraped_content(result["text"], url)
                 else:
                     logger.warning(f"No content returned from proxy for {url}, falling back to direct scraping")
