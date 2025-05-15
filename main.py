@@ -73,6 +73,11 @@ app = Flask(__name__)
 # Key rotation tracking
 key_usage = {}
 
+@app.route('/healthcheck')
+def healthcheck():
+    """Simple health check to verify the server is running."""
+    return "Server is running"
+
 @app.route('/')
 def index():
     """Render the main landing page."""
@@ -82,7 +87,7 @@ def index():
     return render_template(
         'index.html', 
         api_keys_available=api_keys_available,
-        extended_proxy_url="http://localhost:3000"
+        extended_proxy_url="http://localhost:5000"
     )
 
 @app.route('/status')
