@@ -74,9 +74,8 @@ except Exception as e:
 # Create the Flask app
 app = Flask(__name__)
 
-# Initialize our API client and agentic search component
-api_client = APIClient(base_url=request.host_url if request else "http://localhost:5000")  
-agentic_search = AgenticSearch(api_client=api_client)
+# We'll initialize the API client and agentic search in the request context
+# to ensure we have access to the correct host URL
 
 # Key rotation tracking
 key_usage = {}
@@ -167,15 +166,82 @@ def web_search_endpoint():
         data = request.get_json()
         query = data.get("query", "")
         max_results = int(data.get("max_results", 10))
+        agentic_mode = data.get("agentic", False)  # New parameter to trigger agentic search
         
         if not query:
             return jsonify({"error": "Query parameter is required"}), 400
         
-        results = web_search(query, max_results)
-        return jsonify({"results": results})
+        # If agentic mode is requested, use the enhanced agentic search
+        if agentic_mode:
+            # Initialize the API client with the correct host URL
+            host_url = request.host_url.rstrip('/')
+            api_client = APIClient(base_url=host_url)
+            search_agent = AgenticSearch(api_client=api_client)
+            
+            # Perform agentic search with multiple iterations and validation
+            search_results = search_agent.search(query, max_iterations=5)
+            
+            return jsonify({
+                "query": query,
+                "agentic": True,
+                "results": search_results["results"],
+                "metadata": {
+                    "iterations": search_results["iterations"],
+                    "execution_time": search_results["execution_time"],
+                    "searches_performed": search_results["searches_performed"],
+                    "urls_visited": search_results["urls_visited"],
+                    "validation_score": search_results["validation_score"],
+                    "validation_feedback": search_results["validation_feedback"]
+                }
+            })
+        else:
+            # Perform the regular web search
+            results = web_search(query, max_results)
+            return jsonify({"query": query, "agentic": False, "results": results})
     
     except Exception as e:
         logger.error(f"Error in web search endpoint: {e}")
+        traceback.print_exc()  # Add full stack trace for debugging
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/agentic_search', methods=['POST'])
+def agentic_search_endpoint():
+    """
+    Enhanced search endpoint that combines multiple tools and strategies
+    to find comprehensive, specific and validated results.
+    """
+    try:
+        data = request.get_json()
+        query = data.get("query", "")
+        max_iterations = int(data.get("max_iterations", 5))
+        
+        if not query:
+            return jsonify({"error": "Query parameter is required"}), 400
+        
+        # Initialize the API client with the correct host URL
+        host_url = request.host_url.rstrip('/')
+        api_client = APIClient(base_url=host_url)
+        search_agent = AgenticSearch(api_client=api_client)
+        
+        # Perform agentic search with multiple iterations and validation
+        search_results = search_agent.search(query, max_iterations=max_iterations)
+        
+        return jsonify({
+            "query": query,
+            "results": search_results["results"],
+            "metadata": {
+                "iterations": search_results["iterations"],
+                "execution_time": search_results["execution_time"],
+                "searches_performed": search_results["searches_performed"],
+                "urls_visited": search_results["urls_visited"],
+                "validation_score": search_results["validation_score"],
+                "validation_feedback": search_results["validation_feedback"]
+            }
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in agentic search endpoint: {e}")
+        traceback.print_exc()  # Add full stack trace for debugging
         return jsonify({"error": str(e)}), 500
 
 @app.route('/fetch_url', methods=['POST'])
