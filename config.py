@@ -102,6 +102,37 @@ DEFAULT_TIMEOUT = 30
 MAX_TOKENS = 8192
 TEMPERATURE = 0.7
 
+# Default models to try in sequence (prioritizing Gemini 2.5)
+DEFAULT_MODELS = [
+    GEMINI_MODELS["pro"],         # gemini-2.5-pro
+    GEMINI_MODELS["pro_alt1"],    # gemini-2.5-pro-latest
+    GEMINI_MODELS["pro_alt2"],    # gemini-2.5-flash
+    GEMINI_MODELS["pro_alt4"],    # gemini-1.5-pro (fallback)
+    GEMINI_MODELS["fallback"]     # gemini-1.0-pro (last resort)
+]
+
+# Safety settings to reduce refusals
+SAFETY_SETTINGS = {
+    "harassment": "block_none",
+    "hate": "block_none",
+    "sexual": "block_none",
+    "dangerous": "block_none"
+}
+
+# Generation configuration
+GENERATION_CONFIG = {
+    "temperature": TEMPERATURE,
+    "max_output_tokens": MAX_TOKENS,
+    "top_p": 0.95,
+    "top_k": 64
+}
+
+# Logging format
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+# Main proxy port
+MAIN_PROXY_PORT = DEFAULT_PORT
+
 # Debug mode
 DEBUG = os.environ.get("DEBUG", "False").lower() in ["true", "1", "yes"]
 
