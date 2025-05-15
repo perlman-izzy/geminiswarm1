@@ -87,6 +87,7 @@ def index():
     return render_template(
         'index.html', 
         api_keys_available=api_keys_available,
+        # Use the same server for extended functionality
         extended_proxy_url=request.host_url.rstrip('/')
     )
 
