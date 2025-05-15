@@ -118,8 +118,14 @@
                 <div class="tool-container" id="web_search-tool" style="display: none;">
                     <div class="card mb-4">
                         <div class="card-header">
-                            <h5 class="mb-0">Web Search</h5>
-                            <div class="tool-description">Search the web using DuckDuckGo</div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">Web Search</h5>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="agentic-search-switch" checked>
+                                    <label class="form-check-label" for="agentic-search-switch">Agentic Search</label>
+                                </div>
+                            </div>
+                            <div class="tool-description">Search the web using DuckDuckGo with enhanced agentic capabilities</div>
                         </div>
                         <div class="card-body">
                             <form id="web-search-form">
@@ -130,6 +136,24 @@
                                 <div class="mb-3">
                                     <label for="max-results" class="form-label">Max Results</label>
                                     <input type="number" class="form-control" id="max-results" value="10" min="1" max="50">
+                                </div>
+                                <div class="mb-3" id="agentic-options">
+                                    <div class="card bg-dark">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Agentic Search Options</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <p class="small text-info">
+                                                Agentic search combines multiple tools and strategies to find comprehensive, 
+                                                specific and validated results for your query.
+                                            </p>
+                                            <div class="mb-2">
+                                                <label for="max-iterations" class="form-label">Max Iterations</label>
+                                                <input type="number" class="form-control form-control-sm" id="max-iterations" value="5" min="1" max="10">
+                                                <div class="form-text">More iterations can find more specific information</div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <button type="submit" class="btn btn-primary">Search</button>
                             </form>
@@ -270,6 +294,12 @@
                 });
             });
 
+            // Toggle agentic search options
+            document.getElementById('agentic-search-switch').addEventListener('change', function(e) {
+                const agenticOptions = document.getElementById('agentic-options');
+                agenticOptions.style.display = this.checked ? 'block' : 'none';
+            });
+
             // Web search form submission
             document.getElementById('web-search-form').addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -278,21 +308,34 @@
                 if (!query) return;
                 
                 const maxResults = document.getElementById('max-results').value;
+                const isAgenticSearch = document.getElementById('agentic-search-switch').checked;
+                let endpoint = '/web_search';
+                let requestData = {
+                    query: query,
+                    max_results: parseInt(maxResults)
+                };
+                
+                // If agentic search is enabled, use that instead
+                if (isAgenticSearch) {
+                    endpoint = '/agentic_search';
+                    const maxIterations = document.getElementById('max-iterations').value;
+                    requestData = {
+                        query: query,
+                        max_iterations: parseInt(maxIterations)
+                    };
+                }
                 
                 // Show loading spinner
                 document.querySelector('#web_search-tool .loading').style.display = 'block';
                 document.getElementById('search-results').innerHTML = '';
                 
                 // Make API request
-                fetch('/web_search', {
+                fetch(endpoint, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        query: query,
-                        max_results: parseInt(maxResults)
-                    })
+                    body: JSON.stringify(requestData)
                 })
                 .then(response => response.json())
                 .then(data => {
