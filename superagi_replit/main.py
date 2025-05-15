@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from superagi_replit.agent.agent import Agent
+from superagi_replit.agent.task_completion import TaskCompletion
 from superagi_replit.lib.logger import logger
 from superagi_replit.models.agent import Agent as AgentModel
 from superagi_replit.models.agent_execution import AgentExecution
@@ -17,6 +18,7 @@ from superagi_replit.models.agent_execution_feed import AgentExecutionFeed
 from superagi_replit.models.agent_execution_goal import AgentExecutionGoal
 from superagi_replit.models.db import get_db, Base, engine
 from superagi_replit.tools.web_search_tool import WebSearchTool
+from superagi_replit.tools.web_scraper_tool import WebScraperTool
 
 
 # Create database tables if they don't exist
@@ -44,6 +46,7 @@ class AgentRead(BaseModel):
 class AgentExecutionCreate(BaseModel):
     agent_id: int = Field(..., description="ID of the agent to execute")
     user_input: str = Field(..., description="Initial user input for the agent")
+    max_iterations: Optional[int] = Field(10, description="Maximum number of iterations to run the agent")
 
 
 class AgentExecutionRead(BaseModel):
@@ -175,11 +178,13 @@ async def execute_agent(execution_data: AgentExecutionCreate, db: Session = Depe
             goals=agent_goals
         )
         
-        # Add tools
+        # Add all available tools
         agent.add_tool(WebSearchTool())
+        agent.add_tool(WebScraperTool())
         
-        # Run the agent
-        response = agent.run(execution_data.user_input)
+        # Run the agent with specified max iterations
+        logger.info(f"Starting agent execution with max_iterations: {execution_data.max_iterations}")
+        response = agent.run(execution_data.user_input, max_iterations=execution_data.max_iterations)
         
         # Save the execution feed
         for msg in agent.get_chat_history():
@@ -245,16 +250,18 @@ async def query_agent(query_data: AgentExecutionQuery, db: Session = Depends(get
             goals=agent_goals
         )
         
-        # Add tools
+        # Add all available tools
         agent.add_tool(WebSearchTool())
+        agent.add_tool(WebScraperTool())
         
         # Load previous chat history
         feeds = db.query(AgentExecutionFeed).filter(AgentExecutionFeed.agent_execution_id == execution.id).all()
         for feed in feeds:
-            agent.add_message(feed.role, feed.feed)
+            agent.add_message(str(feed.role), str(feed.feed))
         
-        # Run the agent with the new query
-        response = agent.run(query_data.user_input)
+        # Run the agent with the new query using task completion
+        logger.info(f"Continuing agent execution with query: {query_data.user_input}")
+        response = agent.run(query_data.user_input, max_iterations=5)
         
         # Save the new execution feed
         now = datetime.now().isoformat()

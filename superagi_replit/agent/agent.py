@@ -212,14 +212,64 @@ Always try to make progress towards completing your goals.
             logger.error(error_msg)
             return error_msg
             
-    def run(self, user_input: str) -> str:
+    def run(self, user_input: str, max_iterations: int = 10) -> str:
         """
         Run the agent with the given user input.
         
         Args:
             user_input: User input to process
+            max_iterations: Maximum number of iterations to run
             
         Returns:
             Agent's final response
         """
-        return self.execute_step(user_input)
+        from superagi_replit.agent.task_completion import TaskCompletion
+        
+        # Reset messages if starting a new conversation
+        if not self.messages:
+            self.messages = []
+            
+        # Add initial user input
+        self.add_message("user", user_input)
+        
+        # Run agent until completion or max iterations
+        iteration = 0
+        final_response = None
+        
+        while iteration < max_iterations:
+            # Check if we've already completed the task
+            is_complete, reason, confidence = TaskCompletion.evaluate_completion(
+                self.goals, 
+                self.messages, 
+                max_iterations=max_iterations,
+                current_iteration=iteration
+            )
+            
+            if is_complete:
+                logger.info(f"Task complete: {reason} (confidence: {confidence:.2f})")
+                if final_response:
+                    return final_response
+                else:
+                    # Get a summary response if we don't have a final response yet
+                    summary_prompt = f"Provide a final summary of the results for the user's question: '{user_input}'"
+                    self.add_message("system", summary_prompt)
+                    final_response = self.execute_step()
+                    return final_response
+            
+            # Execute a step
+            response = self.execute_step()
+            final_response = response  # Update the final response
+            
+            # Log progress
+            iteration += 1
+            logger.info(f"Completed iteration {iteration}/{max_iterations}")
+            
+            # Check if the response contains clear completion indicators
+            completion_indicators = ["task complete", "goal achieved", "objectives met"]
+            if any(indicator in response.lower() for indicator in completion_indicators):
+                logger.info("Task completion indicator found in response")
+                return response
+        
+        # If we reach max iterations without completion
+        logger.info(f"Reached maximum iterations ({max_iterations})")
+        return final_response if final_response is not None else "The task could not be completed within the allotted iterations."
