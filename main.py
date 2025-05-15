@@ -87,7 +87,7 @@ def index():
     return render_template(
         'index.html', 
         api_keys_available=api_keys_available,
-        extended_proxy_url="http://localhost:5000"
+        extended_proxy_url=request.host_url.rstrip('/')
     )
 
 @app.route('/status')
