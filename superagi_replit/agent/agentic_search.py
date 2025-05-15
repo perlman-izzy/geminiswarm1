@@ -1,0 +1,716 @@
+"""
+Enhanced Agentic Search module for SuperAGI.
+
+This module implements a more powerful, tool-using agentic search capability that:
+1. Combines multiple search tools to find comprehensive results
+2. Uses iterative refinement to improve search specificity
+3. Self-validates results to ensure completeness and accuracy
+4. Provides specific, actionable results with full details
+"""
+import re
+import time
+import json
+import logging
+from typing import List, Dict, Any, Optional, Tuple, Set, Union
+
+from superagi_replit.lib.logger import logger
+from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
+
+
+class AgenticSearch:
+    """
+    Enhanced search agent that uses multiple tools and strategies to find
+    comprehensive, accurate and specific results for user queries.
+    """
+    
+    def __init__(self, api_client, validator=None):
+        """
+        Initialize the agentic search.
+        
+        Args:
+            api_client: Client for making API calls (to Gemini, tools, etc.)
+            validator: Optional validator instance to use
+        """
+        self.api_client = api_client
+        self.validator = validator or NonLLMTaskValidator()
+        self.search_state = {
+            "query": "",
+            "search_iterations": 0,
+            "tool_uses": {},
+            "searches_performed": [],
+            "urls_visited": [],
+            "raw_results": [],
+            "refined_results": [],
+            "validation_score": 0.0,
+            "validation_feedback": "",
+            "start_time": 0,
+            "end_time": 0
+        }
+    
+    def reset(self):
+        """Reset the search state."""
+        self.validator.reset()
+        self.search_state = {
+            "query": "",
+            "search_iterations": 0,
+            "tool_uses": {},
+            "searches_performed": [],
+            "urls_visited": [],
+            "raw_results": [],
+            "refined_results": [],
+            "validation_score": 0.0,
+            "validation_feedback": "",
+            "start_time": 0,
+            "end_time": 0
+        }
+    
+    def search(self, query: str, max_iterations: int = 5) -> Dict[str, Any]:
+        """
+        Perform an agentic search for the given query.
+        
+        Args:
+            query: The search query
+            max_iterations: Maximum number of search iterations
+            
+        Returns:
+            Dictionary with search results and metadata
+        """
+        # Reset state and initialize
+        self.reset()
+        self.search_state["query"] = query
+        self.search_state["start_time"] = time.time()
+        
+        logger.info(f"Starting agentic search for query: {query}")
+        
+        # Phase 1: Initial search planning
+        search_plan = self._create_search_plan(query)
+        logger.info(f"Created search plan with {len(search_plan)} steps")
+        
+        # Phase 2: Execute the search plan with adaptive refinement
+        for i in range(max_iterations):
+            self.search_state["search_iterations"] += 1
+            
+            # Determine what to search for in this iteration
+            if i == 0:
+                # Initial searches from the plan
+                current_searches = search_plan[:2]  # Start with first 2 planned searches
+            else:
+                # Generate refinement searches based on what we've found so far
+                refinement = self._generate_search_refinement()
+                current_searches = refinement.get("next_searches", [])
+                
+                # If we have enough specific results and validation passes, we can stop
+                if refinement.get("is_complete", False):
+                    logger.info(f"Search refinement indicates completion after {i+1} iterations")
+                    break
+            
+            # Execute current batch of searches
+            for search_query in current_searches:
+                if search_query in self.search_state["searches_performed"]:
+                    continue  # Skip duplicate searches
+                
+                results = self._execute_search(search_query)
+                self.search_state["searches_performed"].append(search_query)
+                self.search_state["raw_results"].extend(results)
+                
+                # Visit top URLs from results to get specific details
+                urls_to_visit = self._select_urls_to_visit(results)
+                for url in urls_to_visit:
+                    if url in self.search_state["urls_visited"]:
+                        continue  # Skip already visited URLs
+                    
+                    content = self._scrape_url(url)
+                    if content:
+                        # Extract specific information
+                        extracted_info = self._extract_specific_info(content, query)
+                        if extracted_info:
+                            self.search_state["refined_results"].append({
+                                "source": url,
+                                "extracted_info": extracted_info
+                            })
+                        self.search_state["urls_visited"].append(url)
+            
+            # After each iteration, check if we have enough specific information
+            validation_result = self._validate_results()
+            
+            if validation_result["is_valid"]:
+                logger.info(f"Search results validated as complete after {i+1} iterations")
+                break
+                
+            # Update the validator with our progress
+            self.validator.update_metrics(
+                latest_response=json.dumps(self.search_state["refined_results"]),
+                used_tool="AgenticSearch",
+                tool_args={"query": query, "iteration": i+1}
+            )
+            
+        # Phase 3: Final result synthesis and validation
+        synthesized_results = self._synthesize_results()
+        self.search_state["end_time"] = time.time()
+        
+        # Package the final results
+        execution_time = self.search_state["end_time"] - self.search_state["start_time"]
+        result = {
+            "query": query,
+            "iterations": self.search_state["search_iterations"],
+            "execution_time": execution_time,
+            "searches_performed": self.search_state["searches_performed"],
+            "urls_visited": self.search_state["urls_visited"],
+            "result_count": len(synthesized_results),
+            "results": synthesized_results,
+            "validation_score": self.search_state["validation_score"],
+            "validation_feedback": self.search_state["validation_feedback"]
+        }
+        
+        return result
+    
+    def _create_search_plan(self, query: str) -> List[str]:
+        """
+        Create a search plan based on the query.
+        
+        Args:
+            query: The search query
+            
+        Returns:
+            List of planned search queries
+        """
+        # Call the API to generate a search plan
+        prompt = f"""
+        Create a detailed search plan for finding comprehensive information about:
+        "{query}"
+        
+        Generate a list of 5-7 specific search queries that would help gather complete information.
+        These queries should:
+        1. Start with broad searches to map the territory
+        2. Include specific detail-oriented searches
+        3. Include searches for opposing viewpoints or alternatives
+        4. Cover different aspects/dimensions of the request
+        
+        Format your response as a JSON array of search queries.
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            # Extract the JSON array from the response
+            search_plan = self._extract_json_array(response.get("response", "[]"))
+            
+            # Ensure we have some search queries
+            if not search_plan:
+                # Fallback: generate some basic searches
+                search_plan = self._generate_fallback_searches(query)
+                
+            return search_plan
+        except Exception as e:
+            logger.error(f"Error creating search plan: {e}")
+            # Fallback plan
+            return self._generate_fallback_searches(query)
+    
+    def _generate_fallback_searches(self, query: str) -> List[str]:
+        """Generate fallback search queries when the API fails."""
+        # Basic fallback search plan
+        base_query = query.replace("Find", "").replace("find", "").strip()
+        searches = [
+            base_query,  # Direct search
+            f"best {base_query}",  # Quality search
+            f"{base_query} location specific details",  # Specific details
+            f"{base_query} reviews ratings",  # Reviews and ratings
+            f"{base_query} alternatives",  # Alternatives
+        ]
+        return searches
+    
+    def _extract_json_array(self, text: str) -> List[str]:
+        """Extract a JSON array from text."""
+        try:
+            # Find JSON array pattern
+            match = re.search(r'\[.*?\]', text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                return json.loads(json_str)
+            return []
+        except json.JSONDecodeError:
+            logger.error(f"Error parsing JSON array from: {text}")
+            return []
+    
+    def _execute_search(self, search_query: str) -> List[Dict[str, str]]:
+        """
+        Execute a search with the given query.
+        
+        Args:
+            search_query: The search query
+            
+        Returns:
+            List of search results
+        """
+        try:
+            # Call the search API
+            response = self.api_client.web_search(search_query)
+            self.search_state["tool_uses"]["WebSearchTool"] = self.search_state["tool_uses"].get("WebSearchTool", 0) + 1
+            
+            # Process and return results
+            if "results" in response and isinstance(response["results"], list):
+                return response["results"]
+            return []
+        except Exception as e:
+            logger.error(f"Error executing search: {e}")
+            return []
+    
+    def _select_urls_to_visit(self, search_results: List[Dict[str, str]]) -> List[str]:
+        """
+        Select which URLs to visit from search results.
+        
+        Args:
+            search_results: List of search results
+            
+        Returns:
+            List of URLs to visit
+        """
+        urls = []
+        for result in search_results:
+            if "href" in result and result["href"]:
+                # Basic URL filtering
+                url = result["href"]
+                
+                # Skip already visited URLs
+                if url in self.search_state["urls_visited"]:
+                    continue
+                    
+                # Skip certain URL patterns (e.g., social media, pdfs)
+                if any(pattern in url for pattern in [".pdf", "facebook.com", "twitter.com", "instagram.com"]):
+                    continue
+                    
+                urls.append(url)
+                
+                # Limit to top 3 most relevant URLs per search
+                if len(urls) >= 3:
+                    break
+                    
+        return urls
+    
+    def _scrape_url(self, url: str) -> str:
+        """
+        Scrape content from a URL.
+        
+        Args:
+            url: URL to scrape
+            
+        Returns:
+            Scraped text content
+        """
+        try:
+            # Call the scraping API
+            response = self.api_client.scrape_text(url)
+            self.search_state["tool_uses"]["WebScraperTool"] = self.search_state["tool_uses"].get("WebScraperTool", 0) + 1
+            
+            if "content" in response and response["content"]:
+                return response["content"]
+            return ""
+        except Exception as e:
+            logger.error(f"Error scraping URL {url}: {e}")
+            return ""
+    
+    def _extract_specific_info(self, content: str, query: str) -> Dict[str, Any]:
+        """
+        Extract specific information from scraped content.
+        
+        Args:
+            content: Scraped content
+            query: Original search query
+            
+        Returns:
+            Dictionary with extracted information
+        """
+        # Call the API to extract specific information
+        prompt = f"""
+        Based on the following text content and the original query:
+        
+        QUERY: {query}
+        
+        CONTENT:
+        {content[:5000]}  # Limit content to avoid token limits
+        
+        Extract the most relevant and specific information related to the query.
+        Focus on extracting:
+        1. Specific locations with addresses (if applicable)
+        2. Quality indicators, ratings, or reviews
+        3. Specific details about facilities/services
+        4. Requirements for use (cost, memberships, restrictions)
+        5. Contact information
+        
+        Format your response as a concise, focused summary with specific details only.
+        Do not include generic information or speculation.
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "low")
+            return {
+                "extracted_text": response.get("response", "No relevant information found"),
+                "model_used": response.get("model_used", "unknown")
+            }
+        except Exception as e:
+            logger.error(f"Error extracting specific info: {e}")
+            return {
+                "extracted_text": "Error extracting specific information",
+                "error": str(e)
+            }
+    
+    def _generate_search_refinement(self) -> Dict[str, Any]:
+        """
+        Generate refinement searches based on current results.
+        
+        Returns:
+            Dictionary with next searches and completion status
+        """
+        # Package current state for analysis
+        current_results = self.search_state["refined_results"]
+        current_searches = self.search_state["searches_performed"]
+        
+        # Generate a summary of what we've found so far
+        results_summary = "\n".join([
+            f"- {result.get('source', 'Unknown source')}: {result.get('extracted_info', {}).get('extracted_text', 'No text')[:200]}..."
+            for result in current_results[:5]  # Limit to top 5 results
+        ])
+        
+        # Call the API to generate refinement
+        prompt = f"""
+        Based on the original query and search results so far, determine what additional
+        searches are needed to complete the task.
+        
+        ORIGINAL QUERY: {self.search_state["query"]}
+        
+        SEARCHES ALREADY PERFORMED:
+        {", ".join(current_searches)}
+        
+        CURRENT RESULTS SUMMARY:
+        {results_summary}
+        
+        Evaluate whether the current results provide:
+        1. Specific locations and addresses
+        2. Quality information (cleanliness, ratings, etc.)
+        3. Complete details on requirements/restrictions
+        4. Sufficient number of options/alternatives
+        
+        Provide your response as a JSON object with these fields:
+        - is_complete: boolean indicating if the search has found sufficient information
+        - missing_aspects: list of aspects still missing from results
+        - next_searches: list of 2-3 additional search queries that would fill gaps
+        - completion_percentage: estimated percentage of completion (0-100)
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            
+            # Extract the JSON object from the response
+            refinement_text = response.get("response", "{}")
+            refinement = self._extract_json_object(refinement_text)
+            
+            # Ensure we have required fields
+            if "is_complete" not in refinement:
+                refinement["is_complete"] = False
+                
+            if "next_searches" not in refinement or not refinement["next_searches"]:
+                # Fallback: generate some generic refinement searches
+                query = self.search_state["query"]
+                refinement["next_searches"] = [
+                    f"{query} exact locations",
+                    f"{query} address details specific"
+                ]
+                
+            return refinement
+        except Exception as e:
+            logger.error(f"Error generating search refinement: {e}")
+            # Fallback refinement
+            return {
+                "is_complete": False,
+                "next_searches": [
+                    f"{self.search_state['query']} specific locations details",
+                    f"{self.search_state['query']} exact information verified"
+                ]
+            }
+    
+    def _extract_json_object(self, text: str) -> Dict[str, Any]:
+        """Extract a JSON object from text."""
+        try:
+            # Find JSON object pattern
+            match = re.search(r'\{.*\}', text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                return json.loads(json_str)
+            return {}
+        except json.JSONDecodeError:
+            logger.error(f"Error parsing JSON object from: {text}")
+            return {}
+    
+    def _validate_results(self) -> Dict[str, Any]:
+        """
+        Validate the search results using a high-quality LLM.
+        
+        Returns:
+            Dictionary with validation results
+        """
+        # Package current results for validation
+        current_results = self.search_state["refined_results"]
+        
+        # Generate a comprehensive summary of what we've found
+        results_summary = "\n".join([
+            f"SOURCE: {result.get('source', 'Unknown source')}\n" +
+            f"INFORMATION: {result.get('extracted_info', {}).get('extracted_text', 'No text')}\n"
+            for result in current_results
+        ])
+        
+        # Call the API to validate results
+        prompt = f"""
+        Validate the following search results for completeness, accuracy, and specificity.
+        
+        ORIGINAL QUERY: {self.search_state["query"]}
+        
+        SEARCH RESULTS:
+        {results_summary}
+        
+        Validate these results based on the following criteria:
+        1. Completeness: Do the results fully answer the query with all necessary details?
+        2. Specificity: Are locations, addresses, and details specific (not general)?
+        3. Actionability: Could someone take direct action based on these results?
+        4. Verification: Are multiple sources confirming the same information?
+        
+        Provide your response as a JSON object with these fields:
+        - is_valid: boolean indicating if the results are satisfactory
+        - score: validation score from 0.0 to 1.0
+        - feedback: specific feedback on what's missing or could be improved
+        - missing_elements: list of specific elements still missing from the results
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            
+            # Extract the JSON object from the response
+            validation_text = response.get("response", "{}")
+            validation = self._extract_json_object(validation_text)
+            
+            # Store validation data
+            self.search_state["validation_score"] = validation.get("score", 0.0)
+            self.search_state["validation_feedback"] = validation.get("feedback", "")
+            
+            # Ensure we have required fields
+            if "is_valid" not in validation:
+                is_valid = self.search_state["validation_score"] >= 0.8
+                validation["is_valid"] = is_valid
+                
+            return validation
+        except Exception as e:
+            logger.error(f"Error validating results: {e}")
+            # Fallback validation
+            return {
+                "is_valid": False,
+                "score": 0.5,
+                "feedback": "Unable to validate results due to an error"
+            }
+    
+    def _synthesize_results(self) -> List[Dict[str, Any]]:
+        """
+        Synthesize final results from all collected information.
+        
+        Returns:
+            List of synthesized results
+        """
+        # Package current state for synthesis
+        current_results = self.search_state["refined_results"]
+        
+        # If we have few results, use them directly
+        if len(current_results) <= 3:
+            return [
+                {
+                    "source": result.get("source", "Unknown source"),
+                    "content": result.get("extracted_info", {}).get("extracted_text", "No text")
+                }
+                for result in current_results
+            ]
+        
+        # For more results, use the API to synthesize them
+        # Combine all results into a single text
+        combined_text = "\n\n".join([
+            f"SOURCE: {result.get('source', 'Unknown source')}\n" +
+            f"INFORMATION: {result.get('extracted_info', {}).get('extracted_text', 'No text')}"
+            for result in current_results
+        ])
+        
+        # Call the API to synthesize
+        prompt = f"""
+        Synthesize these search results into a comprehensive, organized answer.
+        
+        ORIGINAL QUERY: {self.search_state["query"]}
+        
+        SEARCH RESULTS:
+        {combined_text[:10000]}  # Limit text to avoid token limits
+        
+        Create a definitive response that:
+        1. Presents specific locations with complete addresses
+        2. Includes all relevant quality information (cleanliness, ratings)
+        3. Organizes information logically by location/venue
+        4. Highlights the BEST options at the top (if quality was part of the query)
+        5. Includes all relevant requirements and restrictions
+        6. Cites sources for each piece of information
+        
+        Focus on providing SPECIFIC, ACCURATE, and COMPLETE information only.
+        Do not include generic information or speculation.
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            
+            # Process the synthesized response
+            synthesized_text = response.get("response", "")
+            
+            # Split the synthesized text into sections based on locations/venues
+            sections = self._split_into_sections(synthesized_text)
+            
+            # Format as a list of result objects
+            return [
+                {
+                    "title": section.get("title", "Results"),
+                    "content": section.get("content", ""),
+                    "model_used": response.get("model_used", "unknown")
+                }
+                for section in sections
+            ]
+        except Exception as e:
+            logger.error(f"Error synthesizing results: {e}")
+            # Fallback: return raw results
+            return [
+                {
+                    "source": result.get("source", "Unknown source"),
+                    "content": result.get("extracted_info", {}).get("extracted_text", "No text")
+                }
+                for result in current_results
+            ]
+    
+    def _split_into_sections(self, text: str) -> List[Dict[str, str]]:
+        """Split synthesized text into logical sections."""
+        # If the text has clear section headers (e.g., with ## markdown)
+        sections = []
+        current_title = "Results"
+        current_content = []
+        
+        for line in text.split('\n'):
+            if re.match(r'^#+\s+', line) or re.match(r'^[A-Z][\w\s]+:', line):
+                # If we were collecting content for a previous section, save it
+                if current_content:
+                    sections.append({
+                        "title": current_title,
+                        "content": '\n'.join(current_content)
+                    })
+                
+                # Start a new section
+                current_title = line.strip('#: ')
+                current_content = []
+            else:
+                current_content.append(line)
+        
+        # Add the last section
+        if current_content:
+            sections.append({
+                "title": current_title,
+                "content": '\n'.join(current_content)
+            })
+        
+        # If no clear sections were found, create a single section
+        if not sections:
+            sections.append({
+                "title": "Results",
+                "content": text
+            })
+            
+        return sections
+
+
+class APIClient:
+    """
+    Simple API client interface for the AgenticSearch class.
+    This can be replaced with the actual API client implementation.
+    """
+    
+    def __init__(self, base_url: str):
+        """
+        Initialize the API client.
+        
+        Args:
+            base_url: Base URL for API endpoints
+        """
+        self.base_url = base_url
+        
+    def call_gemini(self, prompt: str, priority: str = "low") -> Dict[str, Any]:
+        """
+        Call the Gemini API.
+        
+        Args:
+            prompt: The prompt to send
+            priority: Priority level (low or high)
+            
+        Returns:
+            Response from the API
+        """
+        import requests
+        try:
+            url = f"{self.base_url}/gemini"
+            response = requests.post(
+                url,
+                json={
+                    "prompt": prompt,
+                    "priority": priority,
+                    "verbose": False
+                },
+                headers={"Content-Type": "application/json"}
+            )
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error calling Gemini API: {e}")
+            return {"status": "error", "response": str(e)}
+    
+    def web_search(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        Perform a web search.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results
+            
+        Returns:
+            Dictionary with search results
+        """
+        import requests
+        try:
+            url = f"{self.base_url}/web_search"
+            response = requests.post(
+                url,
+                json={
+                    "query": query,
+                    "max_results": max_results
+                },
+                headers={"Content-Type": "application/json"}
+            )
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error performing web search: {e}")
+            return {"status": "error", "error": str(e), "results": []}
+    
+    def scrape_text(self, url: str) -> Dict[str, Any]:
+        """
+        Scrape text from a URL.
+        
+        Args:
+            url: URL to scrape
+            
+        Returns:
+            Dictionary with scraped content
+        """
+        import requests
+        try:
+            api_url = f"{self.base_url}/scrape_text"
+            response = requests.post(
+                api_url,
+                json={"url": url},
+                headers={"Content-Type": "application/json"}
+            )
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error scraping URL: {e}")
+            return {"status": "error", "error": str(e), "content": ""}

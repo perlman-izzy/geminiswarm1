@@ -21,6 +21,10 @@ from config import (
     OPENAI_API_KEY, ANTHROPIC_API_KEY
 )
 
+# Import the agentic search components
+from superagi_replit.agent.agentic_search import AgenticSearch, APIClient
+from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
+
 # For extended proxy functionality
 import google.generativeai as genai
 
@@ -69,6 +73,10 @@ except Exception as e:
 
 # Create the Flask app
 app = Flask(__name__)
+
+# Initialize our API client and agentic search component
+api_client = APIClient(base_url=request.host_url if request else "http://localhost:5000")  
+agentic_search = AgenticSearch(api_client=api_client)
 
 # Key rotation tracking
 key_usage = {}
