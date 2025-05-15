@@ -37,7 +37,23 @@ GEMINI_API_KEYS: List[str] = [
     "AIzaSyCUe2ug68aCGMYrNEnMqdyClnGJgzOb14U",
     "AIzaSyBkPwMNZHnvaXl2IyyRwyv6TjPn8skeYlk",
     "AIzaSyAIGisQwzXsxFNNYnOyic8WPZlAVLSk650",
-    "AIzaSyAt_wwjCrCk1Se7BhY9N7yYovfT6rvV8_c"
+    "AIzaSyAt_wwjCrCk1Se7BhY9N7yYovfT6rvV8_c",
+    # New API keys provided by user
+    "AIzaSyDHn4RAMfqCVEhlAtfX34I0nw-BW_fAQl4",
+    "AIzaSyDwWFodtKdGDjTvqHkumPbQSwTCB3gSInA",
+    "AIzaSyCw7uFkfZfu5xQ1faa9hAAUD9wQDJunE_Y",
+    "AIzaSyAaqIIGMsVvjZdN99g9zBAHBYJv_qusn0c",
+    "AIzaSyAAW4E_HF28MpDjL_51YcPfFEBBjHf_aOg",
+    "AIzaSyD8oUFXwk34KQqzZHDWbW1NZ1omAX_NnQw",
+    "AIzaSyDGgwtuxHLYJntaZE36XTioYU0pjhNT62E",
+    "AIzaSyDFhlVIkR6-WFk5T7tuxyr43_VJvbSJdg8",
+    "AIzaSyCP1DNOpxnTmP-Fsfs-D8m3kae7BRa7ZLA",
+    "AIzaSyD4lcJJIOqtPpjBdcyJ4kMy6WMn400h10Q",
+    "AIzaSyA9mwtQHobQEDD0RlBSOxWb2IIziQeBckQ",
+    "AIzaSyAO5xmFONI5okR4EoB3y3sgwcs-AYfY85A",
+    "AIzaSyCJTzumGYPLZ99G6Cp4SYZlDCdGv6Fe6gc",
+    "AIzaSyDrwDIn11sAcLLQe5owwdOcoYEJYPDXf2Q",
+    "AIzaSyCd49yfjbgmvSe-H2bCW9tChVuZZvBrgjI"
 ]
 
 # Other provider API keys

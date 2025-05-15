@@ -1126,13 +1126,23 @@ def write_file_content(filepath: str, content: str) -> Dict[str, Any]:
 
 # Gemini API Functions
 
+# Initialize API key tracking
+key_usage = {}
+rate_limited_keys = {}  # Keys that have hit rate limits and their recovery times
+last_used_index = -1  # For round-robin selection
+
 def get_api_key() -> str:
     """
-    Get a random API key from the available keys.
+    Get an API key using an improved selection strategy:
+    1. Avoids recently rate-limited keys
+    2. Uses round-robin to evenly distribute requests
+    3. Tracks usage for better load distribution
     
     Returns:
-        Random API key
+        Selected API key or empty string if none available
     """
+    global last_used_index
+    
     # Filter out keys that are empty or None
     valid_keys = [key for key in API_KEYS if key]
     
@@ -1140,13 +1150,52 @@ def get_api_key() -> str:
         logger.error("No valid API keys available")
         return ""
     
-    # Select a random key
-    selected_key = random.choice(valid_keys)
+    # Remove keys that are still in the rate-limit blacklist
+    current_time = time.time()
+    temp_blacklist = rate_limited_keys.copy()
+    for key, recovery_time in temp_blacklist.items():
+        if current_time > recovery_time:
+            # Key has recovered from rate limit
+            logger.info(f"API key removed from rate limit blacklist (recovered)")
+            del rate_limited_keys[key]
+    
+    # Get keys that are not rate limited
+    available_keys = [key for key in valid_keys if key not in rate_limited_keys]
+    
+    if not available_keys:
+        logger.warning("All API keys are rate limited. Using any valid key.")
+        # If all keys are rate limited, use the one that will recover soonest
+        if rate_limited_keys:
+            next_key, _ = min(rate_limited_keys.items(), key=lambda x: x[1])
+            return next_key
+        return ""
+    
+    # Use round-robin selection for even distribution
+    last_used_index = (last_used_index + 1) % len(available_keys)
+    selected_key = available_keys[last_used_index]
     
     # Update usage count
     key_usage[selected_key] = key_usage.get(selected_key, 0) + 1
     
     return selected_key
+    
+def mark_key_rate_limited(key: str, recovery_seconds: int = 60) -> None:
+    """
+    Mark an API key as rate limited to avoid using it for a period.
+    
+    Args:
+        key: The API key to mark
+        recovery_seconds: Seconds until the key should be tried again
+    """
+    if not key:
+        return
+        
+    current_time = time.time()
+    recovery_time = current_time + recovery_seconds
+    rate_limited_keys[key] = recovery_time
+    
+    logger.warning(f"API key marked as rate limited. Will retry after {recovery_seconds} seconds.")
+    logger.info(f"Currently {len(rate_limited_keys)} of {len([k for k in API_KEYS if k])} keys are rate limited.")
 
 # Cache for available models to avoid frequent API calls
 _available_models_cache = []
@@ -1367,8 +1416,12 @@ def call_gemini_with_model_selection(
                 if "Failed to connect" in error_msg or "Could not connect" in error_msg:
                     break
                 
-                # If we're rate limited or quota exceeded, try another key
+                # If we're rate limited or quota exceeded, mark the key and try another
                 if "quota" in error_msg.lower() or "rate limit" in error_msg.lower():
+                    # Mark the current key as rate limited
+                    mark_key_rate_limited(api_key, recovery_seconds=120)
+                    
+                    # Get a new API key that's not rate limited
                     api_key = get_api_key()
                     if api_key:
                         configure_genai(api_key)
