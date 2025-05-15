@@ -25,6 +25,14 @@ try:
     has_stealth_proxy = True
 except ImportError:
     has_stealth_proxy = False
+    # Define a dummy function to avoid "possibly unbound" errors
+    def stealth_generate(*args, **kwargs):
+        logger.warning("Stealth proxy not available")
+        return {
+            "text": "Error: Stealth proxy not available",
+            "model_used": "none",
+            "status": "error"
+        }
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,6 +64,7 @@ class AutonomousResearcher:
     def _call_gemini(self, prompt: str, priority: str = "low") -> Dict[str, Any]:
         """
         Call the Gemini API with retry logic for rate limits and model fallback.
+        First tries our stealth proxy if available, then falls back to standard API.
         
         Args:
             prompt: The prompt to send
@@ -75,12 +84,58 @@ class AutonomousResearcher:
             {"model": "text-bison", "name": "PaLM 2 (text-bison)"}  # Last resort
         ]
         
+        # First try the stealth proxy if available
+        if has_stealth_proxy:
+            # Choose a model with slight preference for higher-tier models
+            stealth_models = [
+                "gemini-1.5-pro",  # 40% chance
+                "gemini-1.5-pro",
+                "gemini-1.0-pro",  # 30% chance
+                "gemini-1.0-pro",
+                "gemini-1.0-pro",
+                "gemini-1.0-flash",  # 20% chance
+                "gemini-1.0-flash",
+                "gemini-1.5-flash"  # 10% chance
+            ]
+            
+            # Randomize but weighted toward more capable models
+            model_choice = random.choice(stealth_models)
+            model_name = f"Stealth {model_choice}"
+            
+            logger.info(f"Attempting request with stealth proxy: {model_choice}")
+            
+            try:
+                # Call the stealth proxy
+                temperature = 0.7 if priority == "low" else 0.4  # Lower temp for high priority
+                
+                result = stealth_generate(
+                    prompt=prompt,
+                    model=model_choice,
+                    temperature=temperature,
+                    max_output_tokens=4096
+                )
+                
+                if result.get("status") == "success":
+                    logger.info(f"Stealth proxy request successful with model: {model_choice}")
+                    # Format the response to match expected structure
+                    return {
+                        "response": result.get("text", ""),
+                        "model_used": model_name
+                    }
+                else:
+                    logger.warning(f"Stealth proxy failed: {result.get('text')}")
+                    # Fall through to standard API
+            except Exception as e:
+                logger.error(f"Error using stealth proxy: {e}")
+                # Fall through to standard API
+        
+        # Standard API pathway (if stealth proxy failed or isn't available)
         # Try each model tier until successful or all tiers exhausted
         for model_tier in model_tiers:
             model_name = model_tier["name"]
             model = model_tier["model"]
             
-            logger.info(f"Attempting request with model: {model_name}")
+            logger.info(f"Attempting request with standard API: {model_name}")
             
             for attempt in range(max_retries):
                 try:

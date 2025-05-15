@@ -462,10 +462,20 @@ class GeminiProxy:
         
         # Add optional parameters
         if generation_config:
+            # Gemini API expects generationConfig as a dictionary
             data["generationConfig"] = generation_config
             
         if safety_settings:
-            data["safetySettings"] = safety_settings
+            # Gemini API expects safetySettings as a list of dictionaries
+            # Ensure it's the correct format
+            if isinstance(safety_settings, list):
+                data["safetySettings"] = safety_settings
+            else:
+                # If it was passed incorrectly as a dict, convert to list format
+                data["safetySettings"] = [
+                    {"category": category, "threshold": threshold}
+                    for category, threshold in (safety_settings or {}).items()
+                ]
             
         # Execute the request through the key manager
         status_code, response = self.key_manager.execute_with_retry(url, data)
