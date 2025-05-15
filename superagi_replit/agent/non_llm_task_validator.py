@@ -103,12 +103,65 @@ class NonLLMTaskValidator:
         if completion_markers:
             marker = completion_markers[0]  # Use the first found marker
             return True, f"Completion marker found: '{marker}'", 0.9
+        
+        # Detect task type
+        task_type = self._detect_task_type(task_description)
+        
+        # Check for task-specific completion criteria based on task type
+        if task_type == "list":
+            # For list tasks, check if we have a substantial list
+            list_count = self._count_list_items()
+            required_items = 10  # Default
             
-        # Check for task-specific completion criteria
-        is_list_task = "list" in task_description.lower()
-        if is_list_task and self._has_substantial_list(latest_response):
-            list_count = len(re.findall(r"^\d+\.", latest_response, re.MULTILINE))
-            return True, f"List task complete with {list_count} items", 0.85
+            # Check if a specific number is mentioned in the task
+            number_match = re.search(r"\b(\d+)\b", task_description)
+            if number_match:
+                required_items = int(number_match.group(1))
+                
+            if list_count >= required_items:
+                return True, f"List task complete with {list_count} items (needed {required_items})", 0.9
+                
+        elif task_type == "venue":
+            # For venue search, check if we have a substantial list of locations
+            venue_keywords = ["venue", "club", "bar", "location", "place", "restaurant", "address"]
+            combined_text = " ".join(self.response_history).lower()
+            
+            # Count occurrence of venue keywords
+            venue_mentions = sum(combined_text.count(keyword) for keyword in venue_keywords)
+            
+            # Count addresses (simplified pattern)
+            addresses = len(re.findall(r"\d+\s+[A-Za-z]+\s+(?:St|Ave|Blvd|Road|Rd|Street|Avenue)", combined_text, re.IGNORECASE))
+            
+            list_count = self._count_list_items()
+            
+            if list_count >= 5 and addresses >= 3:
+                return True, f"Venue search complete with {list_count} listings and {addresses} addresses", 0.9
+                
+        elif task_type == "email":
+            # For email tasks, look for email addresses
+            email_count = 0
+            for response in self.response_history:
+                emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", response)
+                email_count += len(emails)
+                
+            required_count = 10  # Default
+            number_match = re.search(r"\b(\d+)\b", task_description)
+            if number_match:
+                required_count = int(number_match.group(1))
+                
+            if email_count >= required_count:
+                return True, f"Email task complete with {email_count} email addresses found", 0.95
+                
+        elif task_type == "facility":
+            # For facility search (like restrooms), check for specific details
+            combined_text = " ".join(self.response_history).lower()
+            
+            # Check for details like addresses, ratings, specific locations
+            has_address = re.search(r"\d+\s+[A-Za-z]+\s+(?:St|Ave|Blvd|Road|Rd|Street|Avenue)", combined_text, re.IGNORECASE) is not None
+            has_rating = any(word in combined_text for word in ["clean", "cleanest", "rating", "review", "stars", "score"])
+            
+            if has_address and has_rating and self.iteration_count >= 5:
+                return True, f"Facility search complete with specific location and quality details", 0.85
             
         # Calculate information gathering sufficiency
         info_coverage = self._calculate_information_coverage(task_description)
@@ -117,6 +170,41 @@ class NonLLMTaskValidator:
         
         # Default: task is not complete
         return False, "Task in progress", max(0.1, info_coverage)
+        
+    def _detect_task_type(self, task_description: str) -> str:
+        """Detect the type of task from the description."""
+        task_lower = task_description.lower()
+        
+        # Check for list task
+        if "list" in task_lower or any(word in task_lower for word in ["find all", "find me", "gather", "collect"]):
+            return "list"
+            
+        # Check for venue search
+        if any(word in task_lower for word in ["venue", "club", "bar", "restaurant", "hotel", "location"]):
+            return "venue"
+            
+        # Check for email search
+        if "email" in task_lower or "@" in task_lower:
+            return "email"
+            
+        # Check for facility search
+        if any(word in task_lower for word in ["restroom", "bathroom", "toilet", "facility"]):
+            return "facility"
+            
+        # Default type
+        return "general"
+        
+    def _count_list_items(self) -> int:
+        """Count list items across recent responses."""
+        list_count = 0
+        for response in self.response_history:
+            # Count numbered items
+            list_count += len(re.findall(r"^\s*\d+\.\s", response, re.MULTILINE))
+            
+            # Count bulleted items
+            list_count += len(re.findall(r"^\s*[\*\-•]\s", response, re.MULTILINE))
+            
+        return list_count
         
     def _extract_completion_markers(self, text: str) -> List[str]:
         """Extract completion marker phrases from text."""
@@ -175,16 +263,57 @@ class NonLLMTaskValidator:
         keyword_matches = sum(1 for kw in keywords if kw in recent_text)
         keyword_coverage = keyword_matches / max(1, len(keywords))
         
+        # Special handling for list-based tasks
+        list_items_count = 0
+        for response in self.response_history[-3:] if len(self.response_history) >= 3 else self.response_history:
+            # Count numbered list items
+            list_items = re.findall(r"^\s*\d+\.\s", response, re.MULTILINE)
+            list_items_count += len(list_items)
+            
+            # Count bulleted list items
+            bulleted_items = re.findall(r"^\s*[\*\-•]\s", response, re.MULTILINE)
+            list_items_count += len(bulleted_items)
+            
+        list_bonus = min(1.0, list_items_count / 10.0)  # Bonus for having substantial lists (10+ items is max)
+        
+        # Check for presence of specific entities related to task
+        entity_types = {
+            "venue": ["venue", "club", "bar", "restaurant", "hotel", "location", "address"],
+            "contact": ["email", "contact", "phone", "number", "@"],
+            "facility": ["restroom", "bathroom", "toilet", "facility"]
+        }
+        
+        task_type = None
+        for entity_type, keywords in entity_types.items():
+            if any(keyword in task_description.lower() for keyword in keywords):
+                task_type = entity_type
+                break
+                
+        entity_bonus = 0.0
+        if task_type:
+            entity_matches = sum(1 for keyword in entity_types[task_type] if keyword in recent_text)
+            entity_bonus = min(1.0, entity_matches / len(entity_types[task_type]))
+        
         # More tools used suggests more thorough research
         tools_diversity = len(self.tool_uses) / 3.0  # Normalize by assuming 3 tools is comprehensive
+        tool_usage_count = sum(self.tool_uses.values())
+        tool_usage_bonus = min(1.0, tool_usage_count / 5.0)  # Bonus for using tools multiple times
         
         # Combine metrics with appropriate weights
         coverage = (
-            (0.4 * keyword_coverage) +
-            (0.3 * min(1.0, pattern_counts / 20)) +  # Cap at 20 information patterns
-            (0.3 * min(1.0, tools_diversity))
+            (0.3 * keyword_coverage) +
+            (0.2 * min(1.0, pattern_counts / 20)) +  # Cap at 20 information patterns
+            (0.2 * min(1.0, tools_diversity)) +
+            (0.1 * tool_usage_bonus) +
+            (0.1 * list_bonus) +
+            (0.1 * entity_bonus)
         )
         
+        # Check if the response is in a good final format
+        has_conclusion = any(marker in recent_text for marker in ["conclusion", "summary", "in summary"])
+        if has_conclusion:
+            coverage += 0.1  # Bonus for having a conclusion
+            
         return min(1.0, coverage)  # Ensure maximum of 1.0
         
     def _calculate_similarity(self, text1: str, text2: str) -> float:
