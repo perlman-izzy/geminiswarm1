@@ -116,7 +116,10 @@ def generate_content(prompt: str,
             # Handle errors
             error_msg = "Unknown error"
             if "error" in response:
-                error_msg = response["error"].get("message", str(response["error"]))
+                if isinstance(response["error"], dict) and "message" in response["error"]:
+                    error_msg = response["error"]["message"]
+                else:
+                    error_msg = str(response["error"])
             
             return {
                 "text": f"Error: {error_msg}",

@@ -327,7 +327,7 @@ class KeyManager:
         while attempt < max_attempts:
             key = self.get_next_key()
             if not key:
-                return 429, {"error": "No API keys available"}
+                return 429, {"error": {"message": "No API keys available"}}
                 
             # Get randomized browser signature
             headers = self.request_optimizer.get_random_signature()

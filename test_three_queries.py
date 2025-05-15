@@ -11,14 +11,19 @@ from typing import Dict, Any
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("test_queries")
 
-# Import our stealth client
+# Import our fallback stealth client
 try:
-    from gemini_stealth_client import generate_content
+    from fallback_stealth_proxy import generate_content
     HAS_STEALTH_PROXY = True
-    logger.info("Using stealth proxy for tests")
+    logger.info("Using fallback stealth proxy for tests")
 except ImportError:
-    HAS_STEALTH_PROXY = False
-    logger.warning("Stealth proxy not available, using standard API only")
+    try:
+        from gemini_stealth_client import generate_content
+        HAS_STEALTH_PROXY = True
+        logger.info("Using original stealth proxy for tests")
+    except ImportError:
+        HAS_STEALTH_PROXY = False
+        logger.warning("No stealth proxy available, using standard API only")
     
     # Provide alternative implementation
     import requests

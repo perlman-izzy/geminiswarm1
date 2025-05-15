@@ -21,19 +21,28 @@ from typing import Dict, List, Any, Optional, Tuple
 
 # Import our stealth proxy client
 try:
-    from gemini_stealth_client import generate_content as stealth_generate
+    # Try the fallback proxy first
+    from fallback_stealth_proxy import generate_content as stealth_generate
     has_stealth_proxy = True
+    logger.info("Using fallback stealth proxy")
 except ImportError:
-    has_stealth_proxy = False
-    # Define a dummy function to avoid "possibly unbound" errors
-    def stealth_generate(prompt: str, model: str = "gemini-1.5-pro", 
-                         temperature: float = 0.7, max_output_tokens: int = 4096) -> Dict[str, Any]:
-        logger.warning("Stealth proxy not available")
-        return {
-            "text": "Error: Stealth proxy not available",
-            "model_used": "none",
-            "status": "error"
-        }
+    try:
+        # Try the original proxy second
+        from gemini_stealth_client import generate_content as stealth_generate
+        has_stealth_proxy = True
+        logger.info("Using original stealth proxy")
+    except ImportError:
+        has_stealth_proxy = False
+        logger.warning("No stealth proxy available")
+        # Define a dummy function to avoid "possibly unbound" errors
+        def stealth_generate(prompt: str, model: str = "gemini-1.5-pro", 
+                            temperature: float = 0.7, max_output_tokens: int = 4096) -> Dict[str, Any]:
+            logger.warning("Stealth proxy not available")
+            return {
+                "text": "Error: Stealth proxy not available",
+                "model_used": "none",
+                "status": "error"
+            }
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
