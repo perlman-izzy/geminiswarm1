@@ -16,7 +16,15 @@ import logging
 import requests
 import re
 import os
+import random
 from typing import Dict, List, Any, Optional, Tuple
+
+# Import our stealth proxy client
+try:
+    from gemini_stealth_client import generate_content as stealth_generate
+    has_stealth_proxy = True
+except ImportError:
+    has_stealth_proxy = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -265,7 +265,7 @@ class KeyManager:
                     
                     if time_since_last_use >= _MIN_INTERVAL:
                         # Key has rested enough
-                        self.last_used[key] = now
+                        self.last_used[key] = int(now)
                         self.key_usage[key] = self.key_usage.get(key, 0) + 1
                         return key
             
@@ -279,7 +279,7 @@ class KeyManager:
                 logger.info(f"Waiting {time_to_wait + jitter:.2f}s before reusing API key")
                 time.sleep(time_to_wait + jitter)
             
-            self.last_used[key] = time.time()
+            self.last_used[key] = int(time.time())
             self.key_usage[key] = self.key_usage.get(key, 0) + 1
             return key
     

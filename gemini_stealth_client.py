@@ -90,12 +90,12 @@ def generate_content(prompt: str,
             model=model,
             contents=contents,
             generation_config=generation_config,
-            safety_settings={
-                "HARASSMENT": "BLOCK_NONE",
-                "HATE": "BLOCK_NONE",
-                "SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                "DANGEROUS": "BLOCK_NONE"
-            }
+            safety_settings=[
+                {"category": "HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HATE", "threshold": "BLOCK_NONE"},
+                {"category": "SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "DANGEROUS", "threshold": "BLOCK_NONE"}
+            ]
         )
         
         # Extract text from response
