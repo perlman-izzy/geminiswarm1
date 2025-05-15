@@ -22,7 +22,7 @@ from config import (
 )
 
 # Import the agentic search components
-from superagi_replit.agent.agentic_search import AgenticSearch, APIClient
+from superagi_replit.agent.agentic_search import AgenticSearch, SearchAPIClient
 from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
 
 # For extended proxy functionality
@@ -175,7 +175,7 @@ def web_search_endpoint():
         if agentic_mode:
             # Initialize the API client with the correct host URL
             host_url = request.host_url.rstrip('/')
-            api_client = APIClient(base_url=host_url)
+            api_client = SearchAPIClient(base_url=host_url)
             search_agent = AgenticSearch(api_client=api_client)
             
             # Perform agentic search with multiple iterations and validation
@@ -220,7 +220,7 @@ def agentic_search_endpoint():
         
         # Initialize the API client with the correct host URL
         host_url = request.host_url.rstrip('/')
-        api_client = APIClient(base_url=host_url)
+        api_client = SearchAPIClient(base_url=host_url)
         search_agent = AgenticSearch(api_client=api_client)
         
         # Perform agentic search with multiple iterations and validation
