@@ -19,6 +19,11 @@ import os
 import random
 from typing import Dict, List, Any, Optional, Tuple
 
+# Configure logging
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # Import our stealth proxy client
 try:
     # Try the fallback proxy first
@@ -44,9 +49,7 @@ except ImportError:
                 "status": "error"
             }
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+
 
 class AutonomousResearcher:
     """A self-guided research system that can plan, execute, and evaluate research."""
