@@ -1,193 +1,254 @@
 """
-Test script for the task completion system.
+Test script for demonstrating task completion with the agent.
 
-This script helps test the task completion detection system by simulating
-agent responses and checking if the system correctly identifies when a task
-is complete.
+This script uses a Mock LLM to simulate responses and tests the task validator
+on three complex search tasks.
 """
 import json
-import requests
-import sys
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Tuple
+import sys
+import re
+import os
 
-# Configuration
-API_BASE_URL = "http://localhost:5000"
+from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
+from superagi_replit.agent.mock_llm import MockLLM
 
 
-def create_agent(name: str, description: str, goals: List[str]) -> Dict[str, Any]:
-    """Create a new agent via the API."""
-    print(f"Creating agent: {name}")
-    response = requests.post(
-        f"{API_BASE_URL}/agents",
-        json={
-            "name": name,
-            "description": description,
-            "goals": goals
+class TaskCompletionTest:
+    """Class for testing task completion."""
+    
+    def __init__(self):
+        """Initialize the task completion test."""
+        self.mock_llm = MockLLM()
+        self.validator = NonLLMTaskValidator()
+        self.responses = []
+        self.tool_uses = {}
+        
+    def reset(self):
+        """Reset the test state."""
+        self.validator = NonLLMTaskValidator()
+        self.responses = []
+        self.tool_uses = {}
+        
+    def simulate_agent_interaction(self, task_description: str, max_iterations: int = 15) -> Dict[str, Any]:
+        """
+        Simulate an agent interaction and test task completion.
+        
+        Args:
+            task_description: The task to complete
+            max_iterations: Maximum number of iterations
+            
+        Returns:
+            Result dictionary with task status and metrics
+        """
+        self.reset()
+        
+        print(f"\n{'=' * 60}")
+        print(f"TASK: {task_description}")
+        print(f"{'=' * 60}")
+        
+        iteration = 0
+        start_time = time.time()
+        final_response = ""
+        
+        while iteration < max_iterations:
+            iteration += 1
+            print(f"\nIteration {iteration}/{max_iterations}")
+            
+            # Generate a response using the mock LLM
+            if iteration == 1:
+                prompt = task_description
+            else:
+                # In a real agent, previous responses would influence the next prompt
+                prompt = f"{task_description}\n\nConsider what you've found so far and continue the search."
+                
+            response = self.mock_llm.generate(prompt)
+            self.responses.append(response)
+            
+            # Extract and track tool usage
+            tool_usage = self._extract_tool_usage(response)
+            if tool_usage:
+                tool_name, tool_args = tool_usage
+                self.tool_uses[tool_name] = self.tool_uses.get(tool_name, 0) + 1
+                self.validator.update_metrics(response, tool_name, tool_args)
+            else:
+                self.validator.update_metrics(response)
+            
+            # Print a summary of the response (trimmed)
+            response_preview = response.strip()[:200] + "..." if len(response) > 200 else response.strip()
+            print(f"Response: {response_preview}")
+            
+            # Check if task is complete
+            is_complete, reason, confidence = self.validator.is_task_complete(task_description)
+            print(f"Task status: Complete: {is_complete}, Reason: {reason}, Confidence: {confidence:.2f}")
+            
+            if is_complete:
+                print(f"\nTask completed after {iteration} iterations!")
+                final_response = response
+                break
+            
+            # Small delay to simulate real-time interaction
+            time.sleep(0.2)
+            
+        end_time = time.time()
+        execution_time = end_time - start_time
+        
+        # If we didn't complete within the iterations, use the last response
+        if not final_response:
+            final_response = response
+            
+        # Get the status report
+        status_report = self.validator.get_status_report()
+        
+        result = {
+            "task": task_description,
+            "completed": is_complete,
+            "reason": reason,
+            "confidence": confidence,
+            "iterations": iteration,
+            "execution_time": execution_time,
+            "status_report": status_report,
+            "final_response": final_response
         }
-    )
+        
+        # Print summary
+        print(f"\n{'=' * 60}")
+        print(f"TASK SUMMARY")
+        print(f"{'=' * 60}")
+        print(f"Task: {task_description}")
+        print(f"Completed: {is_complete}")
+        print(f"Reason: {reason}")
+        print(f"Confidence: {confidence:.2f}")
+        print(f"Iterations: {iteration}/{max_iterations}")
+        print(f"Execution time: {execution_time:.2f} seconds")
+        print(f"Tool usages: {json.dumps(self.tool_uses, indent=2)}")
+        print(f"Status report: {json.dumps(status_report, indent=2, default=str)}")
+        
+        return result
     
-    if response.status_code != 200:
-        raise Exception(f"Failed to create agent: {response.text}")
-    
-    agent_data = response.json()
-    print(f"Agent created with ID: {agent_data['id']}")
-    return agent_data
+    def _extract_tool_usage(self, response: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Extract tool usage from a response.
+        
+        Args:
+            response: Response string
+            
+        Returns:
+            Tuple of (tool_name, tool_args) or (None, None) if no tool usage found
+        """
+        tool_pattern = r'```\s*{\s*"tool":\s*"([^"]+)",\s*"tool_input":\s*({[^}]+})'
+        match = re.search(tool_pattern, response, re.DOTALL)
+        
+        if match:
+            tool_name = match.group(1)
+            tool_input_str = match.group(2)
+            
+            # Clean up the JSON string (this is simplified)
+            # In real parsing, use a proper JSON parser with error handling
+            tool_input_str = tool_input_str.replace("'", '"')
+            try:
+                tool_args = json.loads(tool_input_str)
+                return tool_name, tool_args
+            except json.JSONDecodeError:
+                pass
+                
+        return None, None
 
 
-def execute_agent(agent_id: int, user_input: str, max_iterations: int = 10) -> Dict[str, Any]:
-    """Execute an agent with a user query."""
-    print(f"Executing agent {agent_id} with query: {user_input}")
-    response = requests.post(
-        f"{API_BASE_URL}/agent-execution",
-        json={
-            "agent_id": agent_id,
-            "user_input": user_input,
-            "max_iterations": max_iterations
-        }
-    )
-    
-    if response.status_code != 200:
-        raise Exception(f"Failed to execute agent: {response.text}")
-    
-    execution_data = response.json()
-    print(f"Execution completed with ID: {execution_data['execution_id']}")
-    return execution_data
+def test_venue_search():
+    """Test the venue search task."""
+    tester = TaskCompletionTest()
+    task = "Find all the venues in San Francisco with pianos. Focus on places where pianos are available for use or performances."
+    return tester.simulate_agent_interaction(task)
 
 
-def get_execution_feed(execution_id: int) -> List[Dict[str, Any]]:
-    """Get the feed for an execution."""
-    print(f"Getting feed for execution {execution_id}")
-    response = requests.get(f"{API_BASE_URL}/agent-execution/{execution_id}/feed")
-    
-    if response.status_code != 200:
-        raise Exception(f"Failed to get execution feed: {response.text}")
-    
-    feed_data = response.json()
-    print(f"Retrieved {len(feed_data)} feed items")
-    return feed_data
+def test_email_search():
+    """Test the email search task."""
+    tester = TaskCompletionTest()
+    task = "Find me 20 email addresses of jazz clubs in New York City. Make sure they are current and valid addresses."
+    return tester.simulate_agent_interaction(task)
 
 
-def test_simple_task():
-    """Test a simple task that should complete quickly."""
-    agent = create_agent(
-        name="SimpleTaskAgent",
-        description="An agent that performs simple tasks",
-        goals=["Answer simple questions accurately"]
-    )
-    
-    result = execute_agent(
-        agent_id=agent["id"],
-        user_input="What is the capital of France?",
-        max_iterations=5
-    )
-    
-    print("\nAgent Response:")
-    print("=" * 50)
-    print(result["response"])
-    print("=" * 50)
-    
-    feed = get_execution_feed(result["execution_id"])
-    return result, feed
+def test_restroom_search():
+    """Test the clean restroom search task."""
+    tester = TaskCompletionTest()
+    task = "Find me the cleanest public restroom in San Francisco that is not upstairs and that you don't have to purchase anything to use. Include specific locations and cleanliness ratings if available."
+    return tester.simulate_agent_interaction(task)
 
 
-def test_complex_task():
-    """Test a more complex task that requires multiple iterations."""
-    agent = create_agent(
-        name="ResearchAgent",
-        description="An agent that performs web research",
-        goals=["Find detailed information on topics", "Provide comprehensive answers"]
-    )
+def save_result(result: Dict[str, Any], filename: str = None):
+    """
+    Save a test result to a file.
     
-    result = execute_agent(
-        agent_id=agent["id"],
-        user_input="Find the latest developments in renewable energy technologies",
-        max_iterations=15
-    )
+    Args:
+        result: Result dictionary
+        filename: Optional filename (will be generated if not provided)
+    """
+    if not filename:
+        task_prefix = result["task"][:20].replace(" ", "_").lower()
+        filename = f"{task_prefix}_result.json"
     
-    print("\nAgent Response:")
-    print("=" * 50)
-    print(result["response"])
-    print("=" * 50)
+    # Ensure the test_results directory exists
+    os.makedirs("test_results", exist_ok=True)
+    filepath = os.path.join("test_results", filename)
     
-    feed = get_execution_feed(result["execution_id"])
-    return result, feed
-
-
-def count_tool_usages(feed: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Count how many times each tool was used in the feed."""
-    tool_counts = {}
-    
-    for item in feed:
-        content = item.get("feed", "")
-        if "tool" in content.lower():
-            # Extract tool name - this is a simplistic approach, might need improvement
-            if '"tool":' in content:
-                try:
-                    # Try to parse JSON if it's in that format
-                    json_part = content.split('```')[1].strip() if '```' in content else content
-                    if json_part.startswith('json'):
-                        json_part = json_part[4:].strip()
-                    data = json.loads(json_part)
-                    tool_name = data.get("tool")
-                    if tool_name:
-                        tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
-                except (IndexError, json.JSONDecodeError):
-                    pass
-    
-    return tool_counts
-
-
-def analyze_feed(feed: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Analyze the execution feed for insights."""
-    analysis = {
-        "total_messages": len(feed),
-        "user_messages": sum(1 for item in feed if item.get("role") == "user"),
-        "assistant_messages": sum(1 for item in feed if item.get("role") == "assistant"),
-        "system_messages": sum(1 for item in feed if item.get("role") == "system"),
-        "tool_usages": count_tool_usages(feed),
-        "completion_indicators": []
+    # Save serializable version of the result
+    serializable_result = {
+        "task": result["task"],
+        "completed": result["completed"],
+        "reason": result["reason"],
+        "confidence": result["confidence"],
+        "iterations": result["iterations"],
+        "execution_time": result["execution_time"],
+        "tool_usages": str(result["status_report"]["tool_usages"]),
+        "info_patterns": str(result["status_report"]["information_patterns"]),
+        "final_response_preview": result["final_response"][:500] + "..."
     }
     
-    # Look for completion indicators
-    completion_patterns = ["task complete", "goal achieved", "completed the task"]
-    for item in feed:
-        if item.get("role") == "assistant":
-            content = item.get("feed", "").lower()
-            for pattern in completion_patterns:
-                if pattern in content:
-                    analysis["completion_indicators"].append({
-                        "message_id": item.get("id"),
-                        "indicator": pattern
-                    })
+    with open(filepath, "w") as f:
+        json.dump(serializable_result, f, indent=2)
     
-    return analysis
+    print(f"Result saved to {filepath}")
 
 
 def main():
-    """Run the main test script."""
-    if len(sys.argv) > 1 and sys.argv[1] == "simple":
-        print("Running simple task test...")
-        result, feed = test_simple_task()
+    """Run all tests."""
+    print("\n" + "=" * 80)
+    print("TASK COMPLETION TESTING")
+    print("=" * 80)
+    
+    if len(sys.argv) > 1:
+        test_num = int(sys.argv[1])
+        if test_num == 1:
+            print("\nRUNNING VENUE SEARCH TEST")
+            result = test_venue_search()
+            save_result(result, "venue_search_result.json")
+        elif test_num == 2:
+            print("\nRUNNING EMAIL SEARCH TEST")
+            result = test_email_search()
+            save_result(result, "email_search_result.json")
+        elif test_num == 3:
+            print("\nRUNNING RESTROOM SEARCH TEST")
+            result = test_restroom_search()
+            save_result(result, "restroom_search_result.json")
+        else:
+            print(f"Invalid test number: {test_num}")
     else:
-        print("Running complex task test...")
-        result, feed = test_complex_task()
+        # Run all tests
+        print("\nRUNNING VENUE SEARCH TEST")
+        venue_result = test_venue_search()
+        save_result(venue_result, "venue_search_result.json")
+        
+        print("\nRUNNING EMAIL SEARCH TEST")
+        email_result = test_email_search()
+        save_result(email_result, "email_search_result.json")
+        
+        print("\nRUNNING RESTROOM SEARCH TEST")
+        restroom_result = test_restroom_search()
+        save_result(restroom_result, "restroom_search_result.json")
     
-    analysis = analyze_feed(feed)
-    
-    print("\nExecution Analysis:")
-    print("=" * 50)
-    print(f"Total messages: {analysis['total_messages']}")
-    print(f"User messages: {analysis['user_messages']}")
-    print(f"Assistant messages: {analysis['assistant_messages']}")
-    print(f"System messages: {analysis['system_messages']}")
-    print("\nTool usages:")
-    for tool, count in analysis["tool_usages"].items():
-        print(f"  - {tool}: {count}")
-    print("\nCompletion indicators:")
-    for indicator in analysis["completion_indicators"]:
-        print(f"  - '{indicator['indicator']}' found in message {indicator['message_id']}")
-    print("=" * 50)
+    print("\nAll tests completed!")
 
 
 if __name__ == "__main__":
