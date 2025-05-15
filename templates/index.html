@@ -220,6 +220,13 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize agentic search options visibility
+            const agenticSwitch = document.getElementById('agentic-search-switch');
+            const agenticOptions = document.getElementById('agentic-options');
+            if (agenticSwitch && agenticOptions) {
+                agenticOptions.style.display = agenticSwitch.checked ? 'block' : 'none';
+            }
+            
             // Tool navigation
             document.querySelectorAll('#tool-list a').forEach(item => {
                 item.addEventListener('click', function(e) {
@@ -345,26 +352,104 @@
                     // Display results
                     if (data.error) {
                         document.getElementById('search-results').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
-                    } else if (data.results && data.results.length > 0) {
-                        let html = `<p>Found ${data.results.length} results for "${data.query}"</p>`;
-                        html += '<div class="list-group">';
-                        
-                        data.results.forEach(result => {
-                            html += `
-                                <div class="list-group-item">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <h5 class="mb-1"><a href="${result.href}" target="_blank">${result.title}</a></h5>
+                        return;
+                    }
+                    
+                    // Check if this is an agentic search response
+                    const isAgenticResponse = data.metadata && data.metadata.validation_score !== undefined;
+                    
+                    if (isAgenticResponse) {
+                        // Handle agentic search results
+                        let html = `
+                            <div class="mb-4">
+                                <h4>Comprehensive Search Results for "${data.query}"</h4>
+                                <div class="card bg-dark mb-3">
+                                    <div class="card-header">
+                                        <div class="d-flex justify-content-between">
+                                            <strong>Search Stats</strong>
+                                            <span class="badge bg-info">Quality Score: ${Math.round(data.metadata.validation_score * 100)}%</span>
+                                        </div>
                                     </div>
-                                    <p class="mb-1">${result.body}</p>
-                                    <small class="text-muted">${result.href}</small>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col">
+                                                <small class="d-block mb-2">
+                                                    <strong>Iterations:</strong> ${data.metadata.iterations}
+                                                </small>
+                                                <small class="d-block mb-2">
+                                                    <strong>Searches:</strong> ${data.metadata.searches_performed.length}
+                                                </small>
+                                            </div>
+                                            <div class="col">
+                                                <small class="d-block mb-2">
+                                                    <strong>URLs Visited:</strong> ${data.metadata.urls_visited.length}
+                                                </small>
+                                                <small class="d-block mb-2">
+                                                    <strong>Time:</strong> ${Math.round(data.metadata.execution_time)}s
+                                                </small>
+                                            </div>
+                                        </div>
+                                        <div class="mt-2">
+                                            <small><strong>Validation:</strong> ${data.metadata.validation_feedback}</small>
+                                        </div>
+                                    </div>
                                 </div>
-                            `;
-                        });
+                            </div>
+                        `;
                         
-                        html += '</div>';
+                        // Add the actual results sections
+                        if (data.results && data.results.length > 0) {
+                            data.results.forEach(section => {
+                                html += `
+                                    <div class="card mb-3">
+                                        <div class="card-header bg-primary">
+                                            <h5 class="mb-0">${section.title}</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="content mb-3">${section.content.replace(/\n/g, '<br>')}</div>
+                                            
+                                            <div class="sources">
+                                                <h6>Sources:</h6>
+                                                <ul class="list-unstyled">
+                                                    ${(section.sources || []).map(source => 
+                                                        `<li><a href="${source.url}" target="_blank" class="text-info">${source.title}</a></li>`
+                                                    ).join('')}
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            });
+                        } else {
+                            html += '<div class="alert alert-info">No comprehensive results found</div>';
+                        }
+                        
                         document.getElementById('search-results').innerHTML = html;
                     } else {
-                        document.getElementById('search-results').innerHTML = '<div class="alert alert-info">No results found.</div>';
+                        // Handle regular search results
+                        let html = `<p>Found ${data.results ? data.results.length : 0} results for "${data.query}"</p>`;
+                        
+                        if (data.results && data.results.length > 0) {
+                            html += '<div class="list-group">';
+                            
+                            data.results.forEach(result => {
+                                html += `
+                                    <div class="list-group-item">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <h5 class="mb-1"><a href="${result.href}" target="_blank">${result.title}</a></h5>
+                                        </div>
+                                        <p class="mb-1">${result.body}</p>
+                                        <small class="text-muted">${result.href}</small>
+                                    </div>
+                                `;
+                            });
+                            
+                            html += '</div>';
+                        } else {
+                            html += '<div class="alert alert-info">No results found.</div>';
+                        }
+                        
+                        document.getElementById('search-results').innerHTML = html;
                     }
                 })
                 .catch(error => {
