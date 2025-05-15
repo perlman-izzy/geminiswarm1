@@ -6,6 +6,7 @@ import os
 import time
 from typing import List, Dict, Any, Optional, Tuple, Union, cast
 
+from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
 from superagi_replit.lib.logger import logger
 from superagi_replit.llms.gemini import GeminiProxy
 from superagi_replit.tools.base_tool import BaseTool
@@ -34,6 +35,9 @@ class Agent:
         self.tools = tools if tools is not None else []
         self.llm = GeminiProxy()  # Use Gemini proxy by default
         self.messages = []  # History of messages
+        
+        # Initialize our non-LLM task completion validator
+        self.task_validator = NonLLMTaskValidator()
         
     def add_tool(self, tool: BaseTool) -> None:
         """Add a tool to the agent."""
@@ -214,7 +218,7 @@ Always try to make progress towards completing your goals.
             
     def run(self, user_input: str, max_iterations: int = 10) -> str:
         """
-        Run the agent with the given user input.
+        Run the agent with the given user input, using non-LLM validation for task completion.
         
         Args:
             user_input: User input to process
@@ -223,11 +227,10 @@ Always try to make progress towards completing your goals.
         Returns:
             Agent's final response
         """
-        from superagi_replit.agent.task_completion import TaskCompletion
-        
-        # Reset messages if starting a new conversation
+        # Reset state for a new run
         if not self.messages:
             self.messages = []
+            self.task_validator.reset()
             
         # Add initial user input
         self.add_message("user", user_input)
@@ -235,41 +238,80 @@ Always try to make progress towards completing your goals.
         # Run agent until completion or max iterations
         iteration = 0
         final_response = None
+        tool_used = None
+        tool_args = None
+        
+        # Log the start of execution
+        task_description = " ".join(self.goals) + " " + user_input
+        logger.info(f"Starting agent execution with task: {task_description}")
+        logger.info(f"Maximum iterations: {max_iterations}")
         
         while iteration < max_iterations:
-            # Check if we've already completed the task
-            is_complete, reason, confidence = TaskCompletion.evaluate_completion(
-                self.goals, 
-                self.messages, 
-                max_iterations=max_iterations,
-                current_iteration=iteration
-            )
-            
-            if is_complete:
-                logger.info(f"Task complete: {reason} (confidence: {confidence:.2f})")
-                if final_response:
-                    return final_response
-                else:
-                    # Get a summary response if we don't have a final response yet
-                    summary_prompt = f"Provide a final summary of the results for the user's question: '{user_input}'"
-                    self.add_message("system", summary_prompt)
-                    final_response = self.execute_step()
-                    return final_response
-            
-            # Execute a step
+            # Execute a step and get the response
             response = self.execute_step()
             final_response = response  # Update the final response
             
+            # Update the validator with the latest response and tool information
+            self.task_validator.update_metrics(
+                latest_response=response,
+                used_tool=tool_used,
+                tool_args=tool_args
+            )
+            
+            # Reset tool information for next iteration
+            tool_used = None
+            tool_args = None
+            
+            # Check if the task is complete using our non-LLM validator
+            is_complete, reason, confidence = self.task_validator.is_task_complete(
+                task_description=task_description,
+                max_iterations=max_iterations
+            )
+            
             # Log progress
             iteration += 1
+            status = self.task_validator.get_status_report()
             logger.info(f"Completed iteration {iteration}/{max_iterations}")
+            logger.info(f"Task status: information_patterns={status['information_patterns']}, tool_usages={status['tool_usages']}")
             
-            # Check if the response contains clear completion indicators
-            completion_indicators = ["task complete", "goal achieved", "objectives met"]
-            if any(indicator in response.lower() for indicator in completion_indicators):
-                logger.info("Task completion indicator found in response")
-                return response
+            if is_complete:
+                logger.info(f"Task complete: {reason} (confidence: {confidence:.2f})")
+                
+                # If we have a low confidence completion but still have iterations left,
+                # ask for a final summary to ensure completeness
+                if confidence < 0.8 and iteration < max_iterations - 1:
+                    logger.info("Low confidence completion, requesting final summary")
+                    summary_prompt = f"Provide a final summary of all the information gathered for the user's question: '{user_input}'"
+                    self.add_message("system", summary_prompt)
+                    final_summary = self.execute_step()
+                    return final_summary
+                    
+                return final_response
+                
+            # Parse response to see if a tool was used for the next iteration
+            try:
+                if "```" in response and ('"tool":' in response or "'tool':" in response):
+                    # Extract the JSON part
+                    json_part = response.split("```")[1].strip()
+                    if json_part.startswith("json"):
+                        json_part = json_part[4:].strip()
+                        
+                    data = json.loads(json_part)
+                    if "tool" in data:
+                        tool_used = data["tool"]
+                        tool_args = data.get("tool_input", {})
+            except Exception as e:
+                logger.warning(f"Error parsing tool usage: {str(e)}")
         
         # If we reach max iterations without completion
-        logger.info(f"Reached maximum iterations ({max_iterations})")
+        logger.info(f"Reached maximum iterations ({max_iterations}) without completion")
+        
+        # Generate a final summary if we hit the limit
+        if final_response is not None:
+            logger.info("Generating final summary after reaching iteration limit")
+            summary_prompt = f"Provide a concise summary of all findings for the user's question: '{user_input}'"
+            self.add_message("system", summary_prompt)
+            final_summary = self.execute_step()
+            return final_summary
+            
         return final_response if final_response is not None else "The task could not be completed within the allotted iterations."
