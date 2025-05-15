@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Completion - Multi-Agent Gemini AI System</title>
+    <link href="https://cdn.replit.com/agent/bootstrap-agent-dark-theme.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+        }
+        .loading {
+            display: none;
+        }
+        .result-container {
+            min-height: 200px;
+        }
+        pre {
+            white-space: pre-wrap;
+        }
+        .tool-description {
+            font-size: 0.85rem;
+            color: var(--bs-secondary);
+        }
+        #results-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body data-bs-theme="dark">
+    <div class="container">
+        <header class="mb-4">
+            <h1 class="text-center">Task Completion System</h1>
+            <p class="lead text-center">Test and validate task completion with direct agents</p>
+        </header>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card mb-4">
+                    <div class="card-header">Run Test Tasks</div>
+                    <div class="card-body">
+                        <form id="task-form">
+                            <div class="mb-3">
+                                <label for="task-type" class="form-label">Task Type</label>
+                                <select class="form-select" id="task-type">
+                                    <option value="venue">Venue Search</option>
+                                    <option value="email">Email Search</option>
+                                    <option value="facility">Facility Search</option>
+                                    <option value="general">General Search</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="query" class="form-label">Search Query</label>
+                                <textarea class="form-control" id="query" rows="4" placeholder="Enter your search query..."></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="max-iterations" class="form-label">Max Iterations</label>
+                                <input type="number" class="form-control" id="max-iterations" value="5" min="1" max="20">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Run Task</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">Previous Results</div>
+                    <div class="list-group list-group-flush" id="results-list">
+                        <div class="list-group-item text-center">
+                            <p class="text-muted">No saved results found</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Task Status</h5>
+                            <div id="task-status" class="badge bg-secondary">Not Started</div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="loading text-center p-5">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Running task...</p>
+                        </div>
+                        
+                        <div id="task-metrics" class="row">
+                            <div class="col-md-3 mb-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-muted">Completed</h6>
+                                        <p class="card-text h3" id="completed-metric">-</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-muted">Confidence</h6>
+                                        <p class="card-text h3" id="confidence-metric">-</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-muted">Iterations</h6>
+                                        <p class="card-text h3" id="iterations-metric">-</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-muted">Time</h6>
+                                        <p class="card-text h3" id="time-metric">-</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="completion-reason" class="alert alert-info my-3" style="display: none;"></div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Result</h5>
+                        <div id="save-paths" class="small"></div>
+                    </div>
+                    <div class="card-body result-container">
+                        <div id="result-content" class="mt-2 mb-2">
+                            <p class="text-muted text-center">Run a task to see results</p>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <div class="d-flex justify-content-between">
+                            <button id="view-json" class="btn btn-sm btn-outline-secondary" disabled>View JSON</button>
+                            <button id="save-txt" class="btn btn-sm btn-outline-info" disabled>Save as Text</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const taskForm = document.getElementById('task-form');
+            const resultsList = document.getElementById('results-list');
+            const loading = document.querySelector('.loading');
+            const taskStatus = document.getElementById('task-status');
+            const resultContent = document.getElementById('result-content');
+            const completionReason = document.getElementById('completion-reason');
+            const savePaths = document.getElementById('save-paths');
+            const viewJsonBtn = document.getElementById('view-json');
+            const saveTxtBtn = document.getElementById('save-txt');
+            
+            // Metrics elements
+            const completedMetric = document.getElementById('completed-metric');
+            const confidenceMetric = document.getElementById('confidence-metric');
+            const iterationsMetric = document.getElementById('iterations-metric');
+            const timeMetric = document.getElementById('time-metric');
+            
+            // Set default task queries based on selection
+            const taskQueries = {
+                'venue': 'Find all the venues in San Francisco with pianos. Focus on places where pianos are available for use or performances.',
+                'email': 'Find me 20 email addresses of jazz clubs in New York City. Make sure they are current and valid addresses.',
+                'facility': 'Find me the cleanest public restroom in San Francisco that is not upstairs and that you don\'t have to purchase anything to use. Include specific locations and cleanliness ratings if available.',
+                'general': 'Research the impact of renewable energy on the economy over the past decade.'
+            };
+            
+            // Update query field when task type changes
+            document.getElementById('task-type').addEventListener('change', function() {
+                document.getElementById('query').value = taskQueries[this.value] || '';
+            });
+            
+            // Set initial default query
+            document.getElementById('query').value = taskQueries['venue'];
+            
+            // Form submission
+            taskForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const taskType = document.getElementById('task-type').value;
+                const query = document.getElementById('query').value.trim();
+                const maxIterations = document.getElementById('max-iterations').value;
+                
+                if (!query) return;
+                
+                // Update UI
+                loading.style.display = 'block';
+                taskStatus.textContent = 'Running';
+                taskStatus.className = 'badge bg-warning';
+                resultContent.innerHTML = '<p class="text-center">Processing task...</p>';
+                completionReason.style.display = 'none';
+                completedMetric.textContent = '-';
+                confidenceMetric.textContent = '-';
+                iterationsMetric.textContent = '-';
+                timeMetric.textContent = '-';
+                savePaths.textContent = '';
+                viewJsonBtn.disabled = true;
+                saveTxtBtn.disabled = true;
+                
+                // Call the API
+                fetch('/run_task', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        task_type: taskType,
+                        query: query,
+                        max_iterations: parseInt(maxIterations)
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide loading indicator
+                    loading.style.display = 'none';
+                    
+                    // Update metrics
+                    completedMetric.textContent = data.completed ? 'Yes' : 'No';
+                    completedMetric.className = data.completed ? 'card-text h3 text-success' : 'card-text h3 text-danger';
+                    
+                    confidenceMetric.textContent = (data.confidence * 100).toFixed(0) + '%';
+                    iterationsMetric.textContent = `${data.iterations}/${data.max_iterations}`;
+                    timeMetric.textContent = `${data.execution_time.toFixed(2)}s`;
+                    
+                    // Update status
+                    taskStatus.textContent = data.completed ? 'Completed' : 'Incomplete';
+                    taskStatus.className = data.completed ? 'badge bg-success' : 'badge bg-danger';
+                    
+                    // Show completion reason
+                    completionReason.textContent = data.reason;
+                    completionReason.style.display = 'block';
+                    
+                    // Display result
+                    if (data.final_response) {
+                        const formattedText = data.final_response.replace(/\n/g, '<br>');
+                        resultContent.innerHTML = formattedText;
+                    } else {
+                        resultContent.innerHTML = '<p class="text-center text-muted">No response generated</p>';
+                    }
+                    
+                    // Update save paths
+                    if (data.saved_to) {
+                        savePaths.textContent = `Saved to: ${data.saved_to}`;
+                        viewJsonBtn.disabled = false;
+                        saveTxtBtn.disabled = false;
+                    }
+                    
+                    // Refresh results list
+                    loadSavedResults();
+                })
+                .catch(error => {
+                    loading.style.display = 'none';
+                    taskStatus.textContent = 'Error';
+                    taskStatus.className = 'badge bg-danger';
+                    resultContent.innerHTML = `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                });
+            });
+            
+            // Load saved results
+            function loadSavedResults() {
+                fetch('/list_results')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.results && data.results.length > 0) {
+                            resultsList.innerHTML = '';
+                            
+                            data.results.forEach(result => {
+                                const resultItem = document.createElement('a');
+                                resultItem.className = 'list-group-item list-group-item-action';
+                                resultItem.href = '#';
+                                resultItem.dataset.file = result.text_file;
+                                
+                                const dateStr = new Date(result.timestamp).toLocaleString();
+                                const taskLabel = result.task_type.charAt(0).toUpperCase() + result.task_type.slice(1);
+                                
+                                resultItem.innerHTML = `
+                                    <div class="d-flex w-100 justify-content-between">
+                                        <h6 class="mb-1">${taskLabel} Search</h6>
+                                        <small class="text-${result.completed ? 'success' : 'danger'}">${result.completed ? 'Completed' : 'Incomplete'}</small>
+                                    </div>
+                                    <p class="mb-1 text-truncate">${result.query}</p>
+                                    <small class="text-muted">${dateStr}</small>
+                                `;
+                                
+                                resultItem.addEventListener('click', function(e) {
+                                    e.preventDefault();
+                                    loadResult(this.dataset.file);
+                                });
+                                
+                                resultsList.appendChild(resultItem);
+                            });
+                        } else {
+                            resultsList.innerHTML = `
+                                <div class="list-group-item text-center">
+                                    <p class="text-muted">No saved results found</p>
+                                </div>
+                            `;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading results:', error);
+                        resultsList.innerHTML = `
+                            <div class="list-group-item text-center">
+                                <p class="text-danger">Error loading results</p>
+                            </div>
+                        `;
+                    });
+            }
+            
+            // Load a specific result
+            function loadResult(filename) {
+                fetch(`/get_result/${filename}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            resultContent.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+                            return;
+                        }
+                        
+                        // Display the content
+                        if (data.content) {
+                            const formattedText = data.content.replace(/\n/g, '<br>');
+                            resultContent.innerHTML = formattedText;
+                        } else {
+                            resultContent.innerHTML = '<p class="text-center text-muted">No content found</p>';
+                        }
+                        
+                        // Update metrics if available
+                        if (data.completed !== undefined) {
+                            completedMetric.textContent = data.completed ? 'Yes' : 'No';
+                            completedMetric.className = data.completed ? 'card-text h3 text-success' : 'card-text h3 text-danger';
+                        }
+                        
+                        if (data.confidence !== undefined) {
+                            confidenceMetric.textContent = (data.confidence * 100).toFixed(0) + '%';
+                        }
+                        
+                        if (data.iterations !== undefined && data.max_iterations !== undefined) {
+                            iterationsMetric.textContent = `${data.iterations}/${data.max_iterations}`;
+                        }
+                        
+                        if (data.execution_time !== undefined) {
+                            timeMetric.textContent = `${data.execution_time.toFixed(2)}s`;
+                        }
+                        
+                        // Show completion reason if available
+                        if (data.reason) {
+                            completionReason.textContent = data.reason;
+                            completionReason.style.display = 'block';
+                        } else {
+                            completionReason.style.display = 'none';
+                        }
+                        
+                        // Update status
+                        if (data.completed !== undefined) {
+                            taskStatus.textContent = data.completed ? 'Completed' : 'Incomplete';
+                            taskStatus.className = data.completed ? 'badge bg-success' : 'badge bg-danger';
+                        }
+                    })
+                    .catch(error => {
+                        resultContent.innerHTML = `<div class="alert alert-danger">Error loading result: ${error.message}</div>`;
+                    });
+            }
+            
+            // Download result as text
+            saveTxtBtn.addEventListener('click', function() {
+                const resultText = resultContent.innerText;
+                const blob = new Blob([resultText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `task_result_${Date.now()}.txt`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+            
+            // Load saved results on page load
+            loadSavedResults();
+        });
+    </script>
+</body>
+</html>

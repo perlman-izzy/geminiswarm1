@@ -346,6 +346,64 @@ def job_application():
     """Render the job application form page."""
     return render_template('job_application.html')
 
+@app.route('/task_completion')
+def task_completion():
+    """Render the task completion testing page."""
+    return render_template('task_completion.html')
+
+@app.route('/run_task', methods=['POST'])
+def run_task():
+    """Run a task and return the results."""
+    try:
+        data = request.get_json()
+        task_type = data.get('task_type', 'general')
+        query = data.get('query', '')
+        max_iterations = int(data.get('max_iterations', 10))
+        
+        if not query:
+            return jsonify({"error": "Query is required"}), 400
+            
+        # Import task_manager here to avoid circular imports
+        import task_manager
+        
+        # Run the task
+        result = task_manager.run_task(task_type, query, max_iterations)
+        
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error running task: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/list_results')
+def list_results():
+    """List all saved task results."""
+    try:
+        # Import task_manager here to avoid circular imports
+        import task_manager
+        
+        # Get the list of results
+        results = task_manager.list_saved_results()
+        
+        return jsonify({"results": results})
+    except Exception as e:
+        logger.error(f"Error listing results: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/get_result/<filename>')
+def get_result(filename):
+    """Get a specific task result."""
+    try:
+        # Import task_manager here to avoid circular imports
+        import task_manager
+        
+        # Get the result content
+        content = task_manager.get_result_content(filename)
+        
+        return jsonify(content)
+    except Exception as e:
+        logger.error(f"Error getting result: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/auto-fill-form', methods=['POST'])
 def auto_fill_form():
     """
