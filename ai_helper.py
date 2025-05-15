@@ -209,6 +209,8 @@ def list_available_models() -> List[Dict[str, Any]]:
             # If all fails, return a list of known models
             logger.warning("Could not list models dynamically, returning hardcoded list")
             return [
+                {"name": "gemini-2.5-pro", "version": "latest"},
+                {"name": "gemini-2.5-flash", "version": "latest"},
                 {"name": "gemini-1.5-pro", "version": "latest"},
                 {"name": "gemini-1.5-flash", "version": "latest"},
                 {"name": "gemini-1.0-pro", "version": "latest"},

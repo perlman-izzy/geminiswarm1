@@ -55,13 +55,13 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta"
 # Gemini Models
 GEMINI_MODELS = {
     # Pro-level models (complex reasoning)
-    "pro": "models/gemini-1.5-pro",
-    "pro_alt1": "models/gemini-1.5-pro-001",
-    "pro_alt2": "models/gemini-1.5-pro-latest",
-    "pro_alt3": "models/gemini-1.5-pro-002",
-    "pro_alt4": "models/gemini-1.5-pro-vision",
-    "pro_alt5": "models/gemini-1.5-pro-vision-latest",
-    "pro_alt6": "models/gemini-pro",
+    "pro": "models/gemini-2.5-pro",  # Using Gemini 2.5 as primary model
+    "pro_alt1": "models/gemini-2.5-pro-latest",
+    "pro_alt2": "models/gemini-2.5-flash",
+    "pro_alt3": "models/gemini-2.5-flash-latest",
+    "pro_alt4": "models/gemini-1.5-pro",
+    "pro_alt5": "models/gemini-1.5-pro-latest",
+    "pro_alt6": "models/gemini-1.5-pro-vision",
     "pro_old": "models/gemini-1.0-pro",
     
     # Flash models (faster, less complex reasoning)
