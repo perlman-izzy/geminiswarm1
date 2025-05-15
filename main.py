@@ -1124,7 +1124,13 @@ def call_gemini_with_model_selection(
         model_lower = model.lower()
         
         # Use model name patterns to categorize
-        if "gemini-1.5-pro" in model_lower and "vision" not in model_lower:
+        if "gemini-2.5-pro" in model_lower:
+            # Prioritize Gemini 2.5 Pro models at the top
+            pro_models.insert(0, model)
+        elif "gemini-2.5-flash" in model_lower:
+            # Prioritize Gemini 2.5 Flash models at the top
+            flash_models.insert(0, model)
+        elif "gemini-1.5-pro" in model_lower and "vision" not in model_lower:
             pro_models.append(model)
         elif "gemini-1.5-flash" in model_lower:
             flash_models.append(model)
