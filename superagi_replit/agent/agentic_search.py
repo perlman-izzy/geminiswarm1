@@ -11,10 +11,122 @@ import re
 import time
 import json
 import logging
-from typing import List, Dict, Any, Optional, Tuple, Set, Union
+from typing import List, Dict, Any, Optional, Tuple, Set, Union, cast
 
 from superagi_replit.lib.logger import logger
 from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
+import requests
+
+
+class APIClient:
+    """
+    Simple API client interface for the AgenticSearch class.
+    Handles communication with various endpoints in the main application.
+    """
+    
+    def __init__(self, base_url: str):
+        """
+        Initialize the API client.
+        
+        Args:
+            base_url: Base URL for API endpoints
+        """
+        self.base_url = base_url
+        
+    def call_gemini(self, prompt: str, priority: str = "low") -> Dict[str, Any]:
+        """
+        Call the Gemini API.
+        
+        Args:
+            prompt: The prompt to send
+            priority: Priority level (low or high)
+            
+        Returns:
+            Response from the API
+        """
+        try:
+            response = requests.post(
+                f"{self.base_url}/gemini",
+                json={"prompt": prompt, "priority": priority}
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error calling Gemini API: {e}")
+            return {"status": "error", "response": str(e)}
+        
+    def web_search(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        Perform a web search.
+        
+        Args:
+            query: Search query
+            max_results: Maximum number of results
+            
+        Returns:
+            Dictionary with search results
+        """
+        try:
+            response = requests.post(
+                f"{self.base_url}/web_search",
+                json={"query": query, "max_results": max_results, "agentic": False}
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error performing web search: {e}")
+            return {"status": "error", "results": []}
+        
+    def scrape_text(self, url: str) -> Dict[str, Any]:
+        """
+        Scrape text from a URL.
+        
+        Args:
+            url: URL to scrape
+            
+        Returns:
+            Dictionary with scraped content
+        """
+        try:
+            response = requests.post(
+                f"{self.base_url}/scrape_text",
+                json={"url": url}
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error scraping text: {e}")
+            return {"status": "error", "content": ""}
+
+
+class SearchSource:
+    """Represents a source of information used in search results."""
+    def __init__(self, url: str, title: str):
+        self.url = url
+        self.title = title
+        
+    def to_dict(self) -> Dict[str, str]:
+        """Convert to dictionary representation."""
+        return {
+            "url": self.url,
+            "title": self.title
+        }
+
+
+class SearchResultSection:
+    """Represents a section of search results with specific content and sources."""
+    def __init__(self, title: str, content: str, sources: Optional[List[SearchSource]] = None):
+        self.title = title
+        self.content = content
+        self.sources = sources if sources is not None else []
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "title": self.title,
+            "content": self.content,
+            "sources": [source.to_dict() for source in self.sources]
+        }
 
 
 class AgenticSearch:
@@ -516,7 +628,7 @@ class AgenticSearch:
         Synthesize final results from all collected information.
         
         Returns:
-            List of synthesized results
+            List of synthesized results (as dictionaries)
         """
         if not self.search_state["refined_results"]:
             return []
@@ -556,40 +668,61 @@ class AgenticSearch:
             synthesis_text = response.get("response", "")
             
             # Split into logical sections
-            sections = self._split_into_sections(synthesis_text)
+            raw_sections = self._split_into_sections(synthesis_text)
             
-            # If we couldn't split into sections, create one section with all content
-            if not sections:
-                sections = [{
-                    "title": "Results",
-                    "content": synthesis_text
-                }]
-                
-            # Add source information
+            # Convert raw dictionaries to proper SearchResultSection objects
+            # Create source objects from refined results
             sources = [
-                {"url": result.get("source", "Unknown"), "title": f"Source {i+1}"}
+                SearchSource(
+                    url=result.get("source", "Unknown"),
+                    title=f"Source {i+1}"
+                )
                 for i, result in enumerate(self.search_state["refined_results"][:5])
             ]
             
-            # Add sources to the result
-            for section in sections:
-                # Make sure each section is a dictionary with a string-indexed key/value structure
-                if isinstance(section, dict):
-                    section["sources"] = sources
+            # Create proper section objects
+            sections = []
+            if raw_sections:
+                for raw_section in raw_sections:
+                    if isinstance(raw_section, dict) and "title" in raw_section and "content" in raw_section:
+                        section = SearchResultSection(
+                            title=raw_section["title"],
+                            content=raw_section["content"],
+                            sources=sources
+                        )
+                        sections.append(section)
+            
+            # If we couldn't extract any valid sections, create a default one
+            if not sections:
+                sections = [
+                    SearchResultSection(
+                        title="Results",
+                        content=synthesis_text,
+                        sources=sources
+                    )
+                ]
                 
-            return sections
+            # Convert to dictionaries for the API response
+            return [section.to_dict() for section in sections]
             
         except Exception as e:
             logger.error(f"Error synthesizing results: {e}")
-            # Return a simple fallback if synthesis fails
-            return [{
-                "title": "Search Results",
-                "content": "\n\n".join(all_extracted_info[:3]),
-                "sources": [
-                    {"url": result.get("source", "Unknown"), "title": f"Source {i+1}"}
-                    for i, result in enumerate(self.search_state["refined_results"][:3])
-                ]
-            }]
+            # Create a fallback section if synthesis fails
+            fallback_sources = [
+                SearchSource(
+                    url=result.get("source", "Unknown"),
+                    title=f"Source {i+1}"
+                )
+                for i, result in enumerate(self.search_state["refined_results"][:3])
+            ]
+            
+            fallback_section = SearchResultSection(
+                title="Search Results",
+                content="\n\n".join(all_extracted_info[:3]),
+                sources=fallback_sources
+            )
+            
+            return [fallback_section.to_dict()]
     
     def _split_into_sections(self, text: str) -> List[Dict[str, str]]:
         """Split synthesized text into logical sections."""
