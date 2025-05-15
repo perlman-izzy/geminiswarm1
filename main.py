@@ -17,7 +17,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for
 # Import from config
 from config import (
     LOG_DIR, API_KEYS, GEMINI_API_KEYS, GEMINI_MODELS, 
-    OPENAI_MODELS, ANTHROPIC_MODELS,
+    OPENAI_MODELS, ANTHROPIC_MODELS, DEFAULT_PORT, EXTENDED_PORT,
     OPENAI_API_KEY, ANTHROPIC_API_KEY
 )
 
