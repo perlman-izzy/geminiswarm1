@@ -363,8 +363,8 @@ class KeyManager:
                         error_data = response.json()
                         if "error" in error_data and "retry_delay" in error_data["error"]:
                             retry_seconds = error_data["error"]["retry_delay"].get("seconds", retry_seconds)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Error parsing rate limit response: {e}")
                         
                     # Mark key as rate limited
                     self.mark_rate_limited(key, retry_seconds)
@@ -376,9 +376,9 @@ class KeyManager:
                     try:
                         response_data = response.json()
                         return status_code, response_data
-                    except:
-                        logger.error("Failed to parse successful response as JSON")
-                        return status_code, {"error": "Failed to parse response"}
+                    except Exception as e:
+                        logger.error(f"Failed to parse successful response as JSON: {e}")
+                        return status_code, {"error": f"Failed to parse response: {str(e)}"}
                         
                 # Handle other errors
                 error_msg = f"API Error: {status_code}"
@@ -386,8 +386,9 @@ class KeyManager:
                     error_data = response.json()
                     if "error" in error_data:
                         error_msg = f"API Error: {error_data['error'].get('message', str(error_data['error']))}"
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Error parsing error response: {e}")
+                    error_msg = f"API Error: {status_code} - {str(e)}"
                     
                 logger.warning(f"{error_msg} (attempt {attempt+1}/{max_attempts})")
                 
@@ -407,7 +408,7 @@ class KeyManager:
                     backoff = _RETRY_BACKOFF ** attempt * (1 + random.uniform(0, 0.1))
                     time.sleep(backoff)
         
-        return 429, {"error": "All API keys exhausted or rate limited"}
+        return 429, {"error": {"message": "All API keys exhausted or rate limited"}}
 
 # ---------------------------------------------------------------------------- #
 # 4. GEMINI CLIENT API                                                         #
