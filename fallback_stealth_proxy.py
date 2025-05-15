@@ -47,11 +47,17 @@ class FallbackProxy:
         self.key_index = 0
         self.key_usage_count = {key: 0 for key in self.api_keys}
         self.last_request_time = 0
-        self.min_request_interval = 0.5  # 500ms minimum between requests
+        self.min_request_interval = 2.0  # 2 seconds minimum between requests
+        self.global_backoff_until = 0    # Time until which we should back off all requests
         
         # Track successful requests
         self.successful_keys = set()
         self.success_count = 0
+        
+        # Request limiter settings
+        self.requests_per_minute = 10     # Target requests per minute
+        self.request_window = 60.0        # Window size in seconds
+        self.request_timestamps = []       # Store timestamps of recent requests
         
         # Browser fingerprinting
         self.user_agents = [
@@ -99,16 +105,55 @@ class FallbackProxy:
         
         return least_used_key
         
+    def _enforce_rate_limit(self) -> float:
+        """
+        Enforce self-imposed rate limits to avoid triggering API rate limits
+        Returns the sleep time needed to stay within rate limits
+        """
+        now = time.time()
+        
+        # Respect global backoff if set (for 429 responses)
+        if now < self.global_backoff_until:
+            sleep_time = self.global_backoff_until - now
+            logger.info(f"In global backoff period, sleeping {sleep_time:.2f}s")
+            return sleep_time
+            
+        # Clean up old request timestamps
+        self.request_timestamps = [t for t in self.request_timestamps if now - t <= self.request_window]
+        
+        # If we're under our rate limit, no need to sleep
+        if len(self.request_timestamps) < self.requests_per_minute:
+            return 0
+            
+        # Calculate time to sleep to stay under rate limit
+        oldest_timestamp = min(self.request_timestamps)
+        time_passed = now - oldest_timestamp
+        target_time = self.request_window
+        
+        if time_passed < target_time:
+            sleep_time = target_time - time_passed + 0.1  # Add a small buffer
+            logger.info(f"Rate limiting: {len(self.request_timestamps)} requests in window, sleeping {sleep_time:.2f}s")
+            return sleep_time
+            
+        return 0
+            
     def mark_rate_limited(self, key: str) -> None:
-        """Mark a key as rate limited"""
+        """Mark a key as rate limited and apply global backoff"""
         if key and key not in self.rate_limited_keys:
             self.rate_limited_keys.add(key)
             logger.warning(f"API key marked as rate limited")
             logger.info(f"Currently {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
             
+            # Set global backoff if many keys are rate limited
+            rate_limited_ratio = len(self.rate_limited_keys) / len(self.api_keys)
+            if rate_limited_ratio > 0.25:  # If more than 25% of keys are rate limited
+                backoff_time = 60 * rate_limited_ratio  # Scale backoff with ratio (15s to 60s)
+                self.global_backoff_until = time.time() + backoff_time
+                logger.warning(f"Setting global backoff for {backoff_time:.1f}s due to high rate limiting")
+            
             # Auto-clear rate limited keys after some time
             def clear_rate_limited_key():
-                time.sleep(120)  # Wait 2 minutes
+                time.sleep(180)  # Wait 3 minutes
                 if key in self.rate_limited_keys:
                     self.rate_limited_keys.remove(key)
                     logger.info(f"Cleared rate limit for a key, now {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
@@ -202,12 +247,18 @@ class FallbackProxy:
         # Create optimized request data with slight variations
         request_data = self.optimize_request_payload(prompt)
         
-        # Enforce minimum time between requests to reduce rate limiting
+        # Apply comprehensive rate limiting strategy
+        # 1. Check global backoff and rate limits
+        sleep_time = self._enforce_rate_limit()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+            
+        # 2. Enforce minimum gap between consecutive requests
         current_time = time.time()
         elapsed = current_time - self.last_request_time
         if elapsed < self.min_request_interval:
             sleep_time = self.min_request_interval - elapsed
-            logger.debug(f"Rate limiting ourselves: sleeping {sleep_time:.2f}s")
+            logger.debug(f"Enforcing minimum request interval: sleeping {sleep_time:.2f}s")
             time.sleep(sleep_time)
         
         # Try up to MAX_RETRIES times
@@ -232,7 +283,10 @@ class FallbackProxy:
             self.last_request_time = time.time()
             
             try:
-                # Make the request
+                # Record this request's timestamp for rate limiting
+                self.request_timestamps.append(time.time())
+                
+                # Make the request with exponential backoff and jitter
                 response = requests.post(
                     url=url,
                     json=request_data,
@@ -243,9 +297,19 @@ class FallbackProxy:
                 # Check for rate limiting
                 if response.status_code == 429:
                     self.mark_rate_limited(api_key)
+                    
+                    # Apply exponential backoff with jitter
                     if attempt < MAX_RETRIES - 1:
-                        backoff = BACKOFF_FACTOR ** attempt * (1 + random.uniform(0, 0.1))
-                        logger.info(f"Waiting {backoff:.2f}s before retry")
+                        # Calculate backoff time: base^attempt * (1 + jitter)
+                        # Use larger backoff factor on later attempts
+                        factor = BACKOFF_FACTOR * (1 + attempt * 0.5)  # Increases with each attempt
+                        jitter = random.uniform(0, 0.3)  # 0-30% randomness
+                        backoff = factor ** (attempt + 1) * (1 + jitter)
+                        
+                        # Cap backoff at 30 seconds
+                        backoff = min(backoff, 30.0)
+                        
+                        logger.info(f"Rate limited (429): Backing off {backoff:.2f}s before retry")
                         time.sleep(backoff)
                         continue
                     else:
@@ -336,11 +400,31 @@ def generate_content(prompt: str, model: str = "gemini-1.5-pro",
 
 def test_proxy():
     """Test the fallback proxy"""
-    print("Testing fallback proxy...")
+    print("Testing enhanced fallback proxy...")
+    
+    # Try a simple request first
+    print("\nTest 1: Basic request")
     result = generate_content("Write a haiku about programming.")
     print(f"Status: {result['status']}")
     print(f"Model: {result['model_used']}")
-    print(f"Text: {result['text']}")
+    print(f"Text: {result['text'][:100]}..." if len(result.get('text', '')) > 100 else f"Text: {result.get('text', '')}")
+    
+    if result['status'] == 'success':
+        # If successful, try a second request to test rate limiting
+        print("\nTest 2: Follow-up request to test rate limiting")
+        time.sleep(3)  # Short delay
+        result2 = generate_content("Explain quantum computing in one sentence.")
+        print(f"Status: {result2['status']}")
+        print(f"Model: {result2['model_used']}")
+        print(f"Text: {result2['text'][:100]}..." if len(result2.get('text', '')) > 100 else f"Text: {result2.get('text', '')}")
+    
+    # Print statistics
+    proxy = get_proxy()
+    print(f"\nStatistics:")
+    print(f"- API Keys total: {len(proxy.api_keys)}")
+    print(f"- Rate limited keys: {len(proxy.rate_limited_keys)}")
+    print(f"- Successful keys: {len(proxy.successful_keys)}")
+    print(f"- Success count: {proxy.success_count}")
     
 if __name__ == "__main__":
     test_proxy()
