@@ -3,6 +3,7 @@ Gemini LLM implementation for SuperAGI, using the local proxy.
 """
 import json
 import requests
+from typing import List, Dict, Union
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from superagi_replit.config import get_config
@@ -37,19 +38,19 @@ class GeminiProxy(BaseLlm):
         self.presence_penalty = presence_penalty
         self.proxy_url = get_config("GEMINI_PROXY_URL")
         
-    def get_source(self):
+    def get_source(self) -> str:
         """Get the source of the LLM."""
         return "gemini"
     
-    def get_model(self):
+    def get_model(self) -> str:
         """Get the model name."""
         return self.model
     
-    def get_models(self):
+    def get_models(self) -> List[str]:
         """Get available models."""
         return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
     
-    def verify_access_key(self):
+    def verify_access_key(self) -> bool:
         """Verify that the access key is valid."""
         # The proxy handles authentication
         return True
@@ -60,7 +61,7 @@ class GeminiProxy(BaseLlm):
         retry=retry_if_exception_type((requests.exceptions.RequestException, json.JSONDecodeError)),
         reraise=True
     )
-    def chat_completion(self, prompt):
+    def chat_completion(self, prompt: Union[str, List[Dict[str, str]]]) -> str:
         """
         Generate a chat completion for the given prompt.
         
