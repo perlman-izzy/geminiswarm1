@@ -139,11 +139,58 @@ def call_gemini():
         prompt = data.get("prompt", "")
         priority = data.get("priority", "low")
         verbose = data.get("verbose", False)
+        use_fallback = data.get("use_fallback", False)
         
         if not prompt.strip():
             return jsonify({"error": "Empty prompt"}), 400
         
-        # Call Gemini with model selection
+        # If use_fallback is True, prioritize Anthropic or OpenAI
+        if use_fallback:
+            # Try Anthropic first
+            if ANTHROPIC_API_KEY:
+                logger.info("Using Anthropic as requested fallback")
+                try:
+                    # Try Anthropic with appropriate model based on priority
+                    anthropic_model = ANTHROPIC_MODELS["primary"] if priority.lower() == "high" else ANTHROPIC_MODELS["economy"]
+                    anthropic_result = generate_with_anthropic(
+                        prompt=prompt,
+                        model_name=anthropic_model,
+                        temperature=0.7,
+                        max_tokens=4096
+                    )
+                    
+                    if anthropic_result["status"] == "success":
+                        logger.info(f"Successfully generated content with Anthropic {anthropic_model}")
+                        return jsonify({
+                            "response": anthropic_result["response"],
+                            "model_used": anthropic_result["model_used"]
+                        })
+                except Exception as e:
+                    logger.error(f"Error during Anthropic fallback: {e}")
+            
+            # Try OpenAI if Anthropic failed or isn't configured
+            if OPENAI_API_KEY:
+                logger.info("Using OpenAI as fallback")
+                try:
+                    # Try OpenAI with appropriate model
+                    openai_model = OPENAI_MODELS["primary"] if priority.lower() == "high" else OPENAI_MODELS["economy"]
+                    openai_result = generate_with_openai(
+                        prompt=prompt,
+                        model_name=openai_model,
+                        temperature=0.7,
+                        max_tokens=4096
+                    )
+                    
+                    if openai_result["status"] == "success":
+                        logger.info(f"Successfully generated content with OpenAI {openai_model}")
+                        return jsonify({
+                            "response": openai_result["response"],
+                            "model_used": openai_result["model_used"]
+                        })
+                except Exception as e:
+                    logger.error(f"Error during OpenAI fallback: {e}")
+        
+        # Call Gemini with model selection (as regular or final fallback)
         result = call_gemini_with_model_selection(prompt, priority, verbose)
         
         if result["status"] == "success":
@@ -152,7 +199,18 @@ def call_gemini():
                 "model_used": result["model_used"]
             })
         else:
-            return jsonify({"error": result["response"]}), 500
+            # For API rate limits, return a 429 status code so clients can handle it properly
+            if "quota" in result["response"].lower() or "rate limit" in result["response"].lower():
+                return jsonify({
+                    "error": result["response"],
+                    "model_used": result["model_used"],
+                    "retry_after": 30  # Suggest retrying after 30 seconds
+                }), 429
+            else:
+                return jsonify({
+                    "error": result["response"],
+                    "model_used": result["model_used"]
+                }), 500
             
     except Exception as e:
         logger.error(f"Error in Gemini endpoint: {e}")
