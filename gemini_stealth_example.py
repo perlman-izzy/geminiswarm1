@@ -25,6 +25,15 @@ try:
 except ImportError:
     HAS_STEALTH_PROXY = False
     logger.warning("Stealth proxy not available, will use standard API only")
+    # Define a dummy function to avoid "possibly unbound" errors
+    def stealth_generate(prompt: str, model: str = "gemini-1.5-pro", 
+                         temperature: float = 0.7, max_output_tokens: int = 4096) -> Dict[str, Any]:
+        logger.warning("Stealth proxy not available")
+        return {
+            "text": "Error: Stealth proxy not available",
+            "model_used": "none",
+            "status": "error"
+        }
 
 def call_regular_gemini_api(prompt: str, model: str = "gemini-1.5-pro") -> Dict[str, Any]:
     """

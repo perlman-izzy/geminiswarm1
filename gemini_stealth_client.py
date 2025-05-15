@@ -90,37 +90,46 @@ def generate_content(prompt: str,
             model=model,
             contents=contents,
             generation_config=generation_config,
+            # Using proper harm category values from Gemini API
             safety_settings=[
-                {"category": "HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HATE", "threshold": "BLOCK_NONE"},
-                {"category": "SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "DANGEROUS", "threshold": "BLOCK_NONE"}
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"}
             ]
         )
         
         # Extract text from response
-        if "candidates" in response and response["candidates"]:
-            candidate = response["candidates"][0]
-            if "content" in candidate and "parts" in candidate["content"]:
-                text = candidate["content"]["parts"][0].get("text", "")
-                
-                # Return structured response compatible with existing code
-                return {
-                    "text": text,
-                    "model_used": model,
-                    "status": "success"
-                }
-        
-        # Handle errors
-        error_msg = "Unknown error"
-        if "error" in response:
-            error_msg = response["error"].get("message", str(response["error"]))
-        
-        return {
-            "text": f"Error: {error_msg}",
-            "model_used": model,
-            "status": "error"
-        }
+        if isinstance(response, dict):
+            if "candidates" in response and response["candidates"]:
+                candidate = response["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    text = candidate["content"]["parts"][0].get("text", "")
+                    
+                    # Return structured response compatible with existing code
+                    return {
+                        "text": text,
+                        "model_used": model,
+                        "status": "success"
+                    }
+            
+            # Handle errors
+            error_msg = "Unknown error"
+            if "error" in response:
+                error_msg = response["error"].get("message", str(response["error"]))
+            
+            return {
+                "text": f"Error: {error_msg}",
+                "model_used": model,
+                "status": "error"
+            }
+        else:
+            # Handle case where response is not a dictionary
+            return {
+                "text": f"Error: Invalid response format - {str(response)}",
+                "model_used": model,
+                "status": "error"
+            }
         
     except Exception as e:
         logger.error(f"Error generating content: {e}")

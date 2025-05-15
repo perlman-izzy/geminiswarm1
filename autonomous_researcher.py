@@ -26,7 +26,8 @@ try:
 except ImportError:
     has_stealth_proxy = False
     # Define a dummy function to avoid "possibly unbound" errors
-    def stealth_generate(*args, **kwargs):
+    def stealth_generate(prompt: str, model: str = "gemini-1.5-pro", 
+                         temperature: float = 0.7, max_output_tokens: int = 4096) -> Dict[str, Any]:
         logger.warning("Stealth proxy not available")
         return {
             "text": "Error: Stealth proxy not available",
