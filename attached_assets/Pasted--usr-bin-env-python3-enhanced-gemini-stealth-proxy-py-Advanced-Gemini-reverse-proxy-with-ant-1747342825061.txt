@@ -1,0 +1,760 @@
+#!/usr/bin/env python3
+"""
+enhanced_gemini_stealth_proxy.py — Advanced Gemini reverse-proxy with anti-detection features
+Enhanced version with additional IP masking techniques and anti-rate-limiting measures
+No external dependencies beyond standard library and requests
+"""
+
+import itertools, threading, time, logging, os, json, re, random, hashlib, requests
+from datetime import datetime, timedelta
+from flask import Flask, request, Response, stream_with_context
+from collections import deque
+import socket
+import struct
+import urllib3
+
+# Disable insecure request warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --------------------------------------------------------------------------- #
+# 1. CONFIGURATION                                                            #
+# --------------------------------------------------------------------------- #
+_API_KEYS = [
+    "AIzaSyAqkNNKyG5cRLVn9megSk8goRvyJRTJeEc",
+    "AIzaSyCIA9YDnDdMMNhHMyVG9IyTlSxYIOthro0",
+    "AIzaSyA2NRb5_Z8Zw04DKCe6Sh37TpkvBU8XDbQ",
+    "AIzaSyAZZ_bOMVX43vKxqBT-BdblUc3pNLGMj_E",
+    "AIzaSyDwQ5k5XECnLSln0BkvAu8bRUSjmmkZ6RE",
+    "AIzaSyAMrLOw0OK-PXTtU9IJwTUlL4v-HDFUE34",
+    "AIzaSyDAuGCrpvAyXvGeDjaTombMO5we_Zcc3e0",
+    "AIzaSyAORtfTYZydn-KQek0Ao0FlVoROmESPmOA",
+    "AIzaSyB21L2ktlbQDVwlUCjO5ODLBfKEp5T80QI",
+    "AIzaSyAqQ4_AOcYBHorp6y1yBQvv9THzcDNlCyc",
+    "AIzaSyB_GYimiqj1p1KG9SrdFxrKw4iBfIkJ0CA",
+    "AIzaSyBPd0W3_KOpEb2mV7R7kPT5aonec90VBnY",
+    "AIzaSyCAxdQFkpfMip8wTShsMRDzAFLQDZxLQ2U",
+    "AIzaSyCOMnKEzhN1vo9JLOyg9WgadHnOPXSvFkE",
+    "AIzaSyAUwewI_HzOrFERA-pOZNZje7zo_GmGzu4",
+    "AIzaSyBEONDB6oPNwd4hLf8BxaFQw3XDca9AgRs",
+    "AIzaSyBgtZJHSUc1vPt1KUy1s_afHkLiIsG_5JQ",
+    "AIzaSyD0Z79HxTWh8O3-c6MdREtE366dc-Y1Z4Y",
+    "AIzaSyBX9fdDHcY0df8OLDj9cRsJss0A7eNVzl4",
+    "AIzaSyCk4AOEslEiCtORn6RldwrBcnXU93mylcE",
+    "AIzaSyBaRLs9RZwDrFEE_NfhwTqgv_TsUl9gYW0",
+    "AIzaSyBaphuCpxi6zXodzLXStc8SLj8KJ8hVdKg",
+    "AIzaSyAQzvFPAkh32Wy4XTcdsXKQ-PnX1fdQ15s",
+    "AIzaSyA3IhGRt1--Dpa8RUWFp3thnMVsF8oSe2I",
+    "AIzaSyBurTGhYgEzYnPQa0ig81B-YXdM2fwvnSs",
+    "AIzaSyBWM9nF7YblOommwMjCq22Orj6Xwzn2YWQ",
+    "AIzaSyDoMMy5cWL2bwzM6wO7-OHxRbjvF0Ulq0c",
+    "AIzaSyBNl1AYLcbvhE3bgc8r8twjV1Ku4b4MCoA",
+    "AIzaSyBp5hqJE5rfnEuTqKYNe33njm4cu7YeGok",
+    "AIzaSyCKjsOFzWcIBAWy0qhX0cHDTVIYdbD-65o",
+    "AIzaSyAWnjH8stitEDFiAf6_UlLNjvqZGdl1fOw",
+    "AIzaSyB_4jcaNX0h-2UaavIPV97_jhcXImgEqIw",
+    "AIzaSyDRwTG7X2dTXyDGElTePgoaETLskBHk82U",
+    "AIzaSyC3VmL5v_CRgl5gyBS2j1EjYlIvQNrLrfM",
+    "AIzaSyCOWe2MuROtQnaPKHy83APRlDZjZYfg6dc",
+    "AIzaSyC4YnFQHATJ3epKXUJoz4syPO-TjqrkF5o",
+    "AIzaSyDNrp__ft4Yx69DHE2wS4CaAk6ESrfAXjM",
+    "AIzaSyCNRCCo5bKfvAPB7uSBxJ8dpui7Ior0ZFg",
+    "AIzaSyBW4Dy_c2UmVRBodhoUemLY_78-agdY-pA",
+    "AIzaSyAtcTZQJuHUtunZCzitrLY1Z-bWE8N2HNw",
+    "AIzaSyD1ZXrMbVFN3oSw8MSIqfH94CSWMSxvh0w",
+    "AIzaSyAEBBYggmL2xkcIYJNCGuxC-uTXY9EiTOo",
+    "AIzaSyB_JbJulCtu3qfslWeWp-dVv92WYHe1Ie8",
+    "AIzaSyBKN2zlVexfOYKGTVV07rRGkJv-8O4x1qM",
+    "AIzaSyAAmOd727xjQutSqqzn10k-QcNuXr3pTlw",
+    "AIzaSyCE_lJPZ3GaI83jJGeFEORUbUCXTirCxUU",
+    "AIzaSyAAU11FhWzHFAF3C0B6LyZCve71FUwrpqg",
+    # New API keys added
+    "AIzaSyBCETa7i2wboKzzaWuYcwVcxQv94_d5k6I",
+    "AIzaSyDz6_k-1ulTZSWvy3ZLGDn9tMNEFHI_VIQ",
+    "AIzaSyB82ugOUjXXMqU7m_ZNQhpD1Hi7XG73ojE",
+    "AIzaSyAlj9nGNNSbSnjrpDIgvRGABzVlxjmxpkA",
+    "AIzaSyBUVonAE3MIq1mKT_JhvRMCNvAZtOXDgdY",
+    "AIzaSyDsV-a8UdjrixjLacMR_LQFHzizRBTpM2M",
+    "AIzaSyBxBqRWBejRP991waO7ggfNuulF2x-tzDA",
+    "AIzaSyDNde9AqDwdoHu7yWRoOsri7rk-r9qUYtE",
+    "AIzaSyDr0yVAyAMFgtJN5bzAC4nTe5xYBUusOfo",
+    "AIzaSyBdJIgApawf4jt2WfCtfTp7vS0Qai1DvrI",
+    "AIzaSyBXHg0ml7REf2IziVmv_-CfRznFNGozQEQ",
+    "AIzaSyAZhh8IBeFTuzzqa0rb2TRGIooDn6c4Ey0",
+    "AIzaSyC24V44j7W7zm3cUS1804aydlD3zuDG748",
+    "AIzaSyBbkMeYTx046jiAD7YBajO_WQGTfZbS6w8",
+    "AIzaSyCLJBeGwIUwTMwfC81p1dBVjIE6prQ1Lkg",
+    "AIzaSyDjV_gYrxKW45AWpEb74CsyNvW7cxiwQOA",
+    "AIzaSyBaBFAw7w7294_OIuUSIyMirs_aBAmgLrM",
+    "AIzaSyBVjdITV8dcfcNINgIwoGVhUCaVTVG3GvA",
+    "AIzaSyCk7_7JDcqyMcSVHJuh_7HqkBGD7kfFDbI",
+    "AIzaSyAaTROY4eSdnEdTobmyVrvU2VAKLaBgFAk",
+    "AIzaSyAAUSZ5lsUEI7_4LHLqzoZMyD3IZDhxzq8",
+    "AIzaSyDwtEJsLglJuydZ7m4H8iP3GO-bwi1F2II",
+    "AIzaSyChTArbcwV8AucSbpNvcvrMwhDTArKjQsk",
+    "AIzaSyBcwbIZPq3yqVonOG-8AqPSaUv6vzQWyRE",
+    "AIzaSyDln6sUGiaidN5CmKDGw3qt1spvgz94QKo",
+    "AIzaSyDozMeIBRZrvGYSt8Ffua3rGp4DlDnONEo",
+    "AIzaSyBAvBbhU71l63Ei25F-eHb0QMKjuotDPIg",
+    "AIzaSyCre8WOWbchKsT7l67V7aIsMGneIEOa59s",
+    "AIzaSyCV3OauLHIpUHV722MszP2JTir_tkC1ECM",
+    "AIzaSyCvKDI8jyoWDYGIaolxsi5A95MPxR2EDKQ",
+    "AIzaSyAeONfijWy8EPJqAY3B0DJedepcGyYRrWU",
+    "AIzaSyBs0LVNK52PXdP3CwCt3brl1v8XW173j9I",
+    "AIzaSyAHKWUYKWSFuMKD7DCmrYOJFjve5sTGiNQ",
+    "AIzaSyCi8DRCyRKrEBZq7QrzOsAqapA84c0kiSY",
+    "AIzaSyCHP-LtnETkbc4B6171yjaS_ShruY39X50",
+    "AIzaSyAWBYpnJ2i0cq6bKxiRD9o5s8TmQU-RcBU",
+    "AIzaSyBjyjhsoqsJRNrERY6PxUnS2PCPQpSEOoY",
+    "AIzaSyC--bhWeFeHYXEkKpjQpJP9e6juK_EBdqg",
+    "AIzaSyCMl4O1wgVAbBF8cKHUrwz2fUMd1xbNJXg",
+    "AIzaSyBjdrhZPw0JdYM8yP0Mc-Ks2og2pzGFoow",
+    "AIzaSyD9uyvsXngMpM7fwHqoVbeI7BFWvb6UH9k",
+    "AIzaSyCRCaRsXAM-YTB_3bxH_QEy9LvTceXqpxI",
+    "AIzaSyAz8nbH7nekZ11s_spWLX6H0vtfNCN0lck",
+]
+
+# Configuration with environment variable overrides
+_MIN_INTERVAL      = float(os.getenv("PER_KEY_INTERVAL",   "7.0"))      # Increased from 5.0
+_QUOTA_RESET_HOURS = float(os.getenv("QUOTA_RESET_HOURS",  "24.0"))
+_MAX_TOKENS        = int(  os.getenv("MAX_TOKENS",         "4096"))
+_STEALTH_MODE      = os.getenv("STEALTH_MODE", "true").lower() in ("1","true","yes")
+_REQUEST_JITTER    = float(os.getenv("JITTER",             "0.5"))      # Increased from 0.3
+_DEBUG             = os.getenv("DEBUG",      "").lower()  in ("1","true","yes")
+_REQUEST_TIMEOUT   = int(  os.getenv("REQUEST_TIMEOUT",   "60"))
+_GEMINI_ROOT       = "https://generativelanguage.googleapis.com"
+_RETRY_ATTEMPTS    = int(  os.getenv("RETRY_ATTEMPTS",     "3"))
+_RETRY_BACKOFF     = float(os.getenv("RETRY_BACKOFF",      "2.0"))
+_IP_ROTATION       = os.getenv("IP_ROTATION", "true").lower() in ("1","true","yes")
+
+# Optional - public proxy list for additional IP rotation
+# If you don't have your own proxies, this can be empty
+_PUBLIC_PROXIES = [
+    # Format: "http://username:password@proxy_host:port" or "http://proxy_host:port"
+    # Add your proxies here
+]
+
+# --------------------------------------------------------------------------- #
+# 2. REQUEST OPTIMIZATION AND FINGERPRINT RANDOMIZATION                       #
+# --------------------------------------------------------------------------- #
+class RequestOptimizer:
+    """Optimizes requests to reduce quota usage and detection"""
+    
+    # Common user agent strings
+    USER_AGENTS = [
+        # Chrome
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+        # Firefox
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        # Safari
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15",
+        # Edge
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    ]
+    
+    # Accept language headers
+    ACCEPT_LANGUAGES = [
+        "en-US,en;q=0.9",
+        "en-GB,en;q=0.9",
+        "en-CA,en;q=0.9,fr-CA;q=0.8",
+        "en-US,en;q=0.8,es;q=0.5",
+        "en-AU,en;q=0.9",
+        "fr-FR,fr;q=0.9,en;q=0.8",
+        "de-DE,de;q=0.9,en;q=0.8",
+        "ja-JP,ja;q=0.9,en;q=0.8",
+        "es-ES,es;q=0.9,en;q=0.8",
+    ]
+    
+    def __init__(self):
+        self.browser_signatures = self._generate_browser_signatures()
+        
+    def _generate_browser_signatures(self):
+        """Generate realistic browser signatures for request headers"""
+        signatures = []
+        
+        chrome_versions = list(range(96, 120))
+        firefox_versions = list(range(90, 115))
+        safari_versions = ["15.1", "15.2", "15.3", "16.0", "16.1", "16.2", "17.0"]
+        
+        # Chrome signatures
+        for version in chrome_versions[:5]:  # Limit to 5 versions
+            signatures.append({
+                "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.{random.randint(4000, 4999)}.{random.randint(100, 200)} Safari/537.36",
+                "Accept-Language": random.choice(self.ACCEPT_LANGUAGES),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Sec-Ch-Ua": f"\"Chromium\";v=\"{version}\", \" Not A;Brand\";v=\"99\"",
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": random.choice(["Windows", "macOS", "Linux"]),
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin"
+            })
+        
+        # Firefox signatures
+        for version in firefox_versions[:5]:  # Limit to 5 versions
+            signatures.append({
+                "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{version}.0) Gecko/20100101 Firefox/{version}.0",
+                "Accept-Language": random.choice(self.ACCEPT_LANGUAGES),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1"
+            })
+        
+        # Safari signatures
+        for version in safari_versions[:3]:  # Limit to 3 versions
+            signatures.append({
+                "User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15",
+                "Accept-Language": random.choice(self.ACCEPT_LANGUAGES),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Connection": "keep-alive"
+            })
+            
+        return signatures
+
+    @staticmethod
+    def optimize_payload(data, path):
+        if not data or not isinstance(data, bytes):
+            return data
+        try:
+            payload = json.loads(data)
+            if path.endswith(":streamGenerateContent") or path.endswith(":generateContent"):
+                if "contents" in payload:
+                    for content in payload["contents"]:
+                        if "parts" in content:
+                            for part in content["parts"]:
+                                if "text" in part:
+                                    part["text"] = re.sub(r'\s+', ' ', part["text"]).strip()
+                # Generation config handling
+                if "generationConfig" in payload:
+                    config = payload["generationConfig"]
+                    # Cap tokens
+                    if config.get("maxOutputTokens", 0) > _MAX_TOKENS:
+                        config["maxOutputTokens"] = _MAX_TOKENS
+                    # Ensure defaults
+                    config.setdefault("maxOutputTokens", _MAX_TOKENS)
+                    if _STEALTH_MODE:
+                        if "temperature" in config:
+                            t0 = config["temperature"]
+                            config["temperature"] = max(0.01, min(1.99, t0 + random.uniform(-0.03,0.03)))
+                        if "topP" in config:
+                            p0 = config["topP"]
+                            config["topP"] = max(0.01, min(0.99, p0 + random.uniform(-0.01,0.01)))
+                else:
+                    payload["generationConfig"] = {
+                        "maxOutputTokens": _MAX_TOKENS,
+                        "temperature": 0.7 + random.uniform(-0.05, 0.05),
+                        "topP": 0.8 + random.uniform(-0.05, 0.05),
+                        "topK": 40,
+                    }
+            return json.dumps(payload).encode('utf-8')
+        except Exception as e:
+            logging.error(f"Error optimizing payload: {e}")
+            return data
+
+    def randomize_headers(self, headers):
+        if not _STEALTH_MODE:
+            return headers
+        
+        new = dict(headers)
+        
+        if random.random() < 0.9:  # 90% chance to modify
+            try:
+                # Use a pre-generated signature or just a random user agent
+                if random.random() < 0.7:
+                    signature = random.choice(self.browser_signatures)
+                    for key, value in signature.items():
+                        new[key] = value
+                else:
+                    new["User-Agent"] = random.choice(self.USER_AGENTS)
+                    new["Accept-Language"] = random.choice(self.ACCEPT_LANGUAGES)
+                
+                # Add some more randomization
+                if random.random() < 0.3:
+                    new["Cache-Control"] = random.choice(["max-age=0", "no-cache", "max-age=300"])
+                
+                # Random referrer
+                if random.random() < 0.2:
+                    referrers = [
+                        "https://console.cloud.google.com/",
+                        "https://ai.google.dev/",
+                        "https://cloud.google.com/vertex-ai",
+                        "https://developers.google.com/",
+                        "https://colab.research.google.com/"
+                    ]
+                    new["Referer"] = random.choice(referrers)
+                
+                # Random client's timezone
+                if random.random() < 0.2:
+                    new["Time-Zone"] = random.choice(["UTC", "America/New_York", "Europe/London", "Asia/Tokyo"])
+                
+            except Exception as e:
+                logging.warning(f"Error generating randomized headers: {e}")
+        
+        return new
+        
+    @staticmethod
+    def get_random_ip():
+        """Generate a random-looking IP address"""
+        ip = socket.inet_ntoa(struct.pack('>I', random.randint(1, 0xffffffff)))
+        # Avoid private IP ranges
+        while (ip.startswith('10.') or ip.startswith('172.16.') or ip.startswith('192.168.') or 
+               ip.startswith('127.') or ip.startswith('0.') or ip.startswith('255.')):
+            ip = socket.inet_ntoa(struct.pack('>I', random.randint(1, 0xffffffff)))
+        return ip
+
+# Initialize request optimizer
+_REQUEST_OPTIMIZER = RequestOptimizer()
+
+# --------------------------------------------------------------------------- #
+# 3. ADVANCED KEY ROTATION WITH ERROR TRACKING                                #
+# --------------------------------------------------------------------------- #
+class AdvancedKeyRotator:
+    def __init__(self, keys, min_interval, quota_reset_hours=24.0):
+        self._keys              = list(keys)
+        self._min_interval      = min_interval
+        self._lock              = threading.Lock()
+        self._quota_reset_hours = quota_reset_hours
+
+        # State
+        self._last_used         = {k: 0.0 for k in self._keys}
+        self._quota_exceeded    = {k: False for k in self._keys}
+        self._error_keys        = {k: False for k in self._keys}
+        self._quota_reset_time  = {k: None for k in self._keys}
+        self._success_count     = {k: 0 for k in self._keys}
+        self._failure_count     = {k: 0 for k in self._keys}
+        self._available_keys    = list(self._keys)
+        self._request_key_map   = {}
+        self._request_history   = {}
+        self._response_cache    = {}
+        self._cache_ttl         = 300
+        self._key_usage         = {k: 0 for k in self._keys}
+        self._quota_exceeded_count = {k: 0 for k in self._keys}
+        self._error_count       = {k: 0 for k in self._keys}
+        self._timeout_count     = {k: 0 for k in self._keys}
+        self._proxies           = _PUBLIC_PROXIES or []
+        self._proxy_index       = 0
+        self._key_to_proxy      = {}
+        self._key_fingerprints  = {k: self._generate_key_fingerprint(k) for k in self._keys}
+
+        random.shuffle(self._available_keys)
+
+    def _generate_key_fingerprint(self, key):
+        """Generate a unique 'fingerprint' for each key to make its traffic pattern look different"""
+        # Create a deterministic seed from the key
+        seed = int(hashlib.md5(key.encode()).hexdigest(), 16) % (2**32)
+        random.seed(seed)
+        
+        # Generate random timing patterns, preferences, etc.
+        fingerprint = {
+            'jitter_multiplier': random.uniform(0.7, 1.3),
+            'preferred_models': random.sample(['gemini-pro', 'gemini-flash', 'gemini-1.5-pro'], k=random.randint(1, 3)),
+            'temperature_bias': random.uniform(-0.1, 0.1),
+            'topP_bias': random.uniform(-0.05, 0.05),
+            'headers_modification_chance': random.uniform(0.6, 0.95),
+            'min_delay': random.uniform(0.1, 0.5),
+            'retry_patience': random.randint(2, 5)
+        }
+        
+        # Reset random seed
+        random.seed()
+        
+        return fingerprint
+        
+    def get_key_fingerprint(self, key):
+        """Get the fingerprint for a key"""
+        return self._key_fingerprints.get(key, {})
+
+    def _hash_request(self, data, path, client_id):
+        if not data:
+            return hashlib.md5((path + str(time.time())).encode()).hexdigest()
+        try:
+            payload = json.loads(data)
+            if path.endswith(":streamGenerateContent") or path.endswith(":generateContent"):
+                txt = "".join(
+                    part["text"]
+                    for content in payload.get("contents", [])
+                    for part in content.get("parts", [])
+                    if "text" in part
+                )
+                return hashlib.md5((path + txt).encode()).hexdigest()
+        except:
+            pass
+        return hashlib.md5((path + str(data)).encode()).hexdigest()
+
+    def track_client_pattern(self, client_id, request_hash, success=True):
+        if client_id not in self._request_history:
+            self._request_history[client_id] = deque(maxlen=5)
+        self._request_history[client_id].append(request_hash)
+
+    def mark_response(self, key, request_hash, status_code):
+        with self._lock:
+            if status_code == 200:
+                self._success_count[key] += 1
+                self._request_key_map[request_hash] = key
+            else:
+                self._failure_count[key] += 1
+                if status_code != 429:
+                    self._error_count[key] += 1
+                    if self._error_count[key] >= 3:
+                        self._error_keys[key] = True
+                        logging.warning(f"Key {key[-4:]} marked error-prone")
+                        if key in self._available_keys:
+                            self._available_keys.remove(key)
+                        self._quota_reset_time[key] = datetime.now() + timedelta(minutes=30)
+
+    def mark_quota_exceeded(self, key):
+        with self._lock:
+            if key in self._keys:
+                logging.warning(f"Key {key[-4:]} marked quota-exceeded")
+                self._quota_exceeded[key] = True
+                self._quota_exceeded_count[key] += 1
+                mul = min(self._quota_exceeded_count[key], 12)
+                mins = 5 * (2 ** mul)
+                self._quota_reset_time[key] = datetime.now() + timedelta(minutes=mins)
+                if key in self._available_keys:
+                    self._available_keys.remove(key)
+                if not self._available_keys:
+                    self._implement_emergency_fallback()
+
+    def mark_timeout(self, key):
+        with self._lock:
+            if key in self._keys:
+                logging.warning(f"Key {key[-4:]} marked timeout")
+                self._error_keys[key] = True
+                self._timeout_count[key] += 1
+                mins = 2 * self._timeout_count[key]
+                self._quota_reset_time[key] = datetime.now() + timedelta(minutes=mins)
+                if key in self._available_keys:
+                    self._available_keys.remove(key)
+                if not self._available_keys:
+                    self._implement_emergency_fallback()
+
+    def _implement_emergency_fallback(self):
+        fallback_wait = 60
+        logging.info(f"Emergency: sleeping {fallback_wait}s")
+        time.sleep(fallback_wait)
+        with self._lock:
+            oldest = min(self._keys, key=lambda k: self._last_used.get(k,0))
+            self._quota_exceeded[oldest] = False
+            self._error_keys[oldest]    = False
+            self._min_interval          = max(self._min_interval*2,30)
+            if oldest not in self._available_keys:
+                self._available_keys.append(oldest)
+
+    def _select_best_key(self, request_hash, client_id):
+        if request_hash in self._request_key_map:
+            k = self._request_key_map[request_hash]
+            if not (self._quota_exceeded[k] or self._error_keys[k]) and k in self._available_keys:
+                return k
+        if client_id in self._request_history:
+            for h in self._request_history[client_id]:
+                if h in self._request_key_map:
+                    k = self._request_key_map[h]
+                    if k in self._available_keys and not (self._quota_exceeded[k] or self._error_keys[k]):
+                        return k
+        with self._lock:
+            if self._available_keys:
+                # Use a weighted random selection - lightly used keys have higher probability
+                usage_weights = {k: max(1, 10 - self._key_usage.get(k, 0)) for k in self._available_keys}
+                total_weight = sum(usage_weights.values())
+                if total_weight > 0:
+                    weights = [usage_weights[k]/total_weight for k in self._available_keys]
+                    return random.choices(self._available_keys, weights=weights, k=1)[0]
+                return min(self._available_keys, key=lambda k: self._key_usage[k])
+        for k in self._keys:
+            if not (self._quota_exceeded[k] or self._error_keys[k]):
+                return k
+        return self._keys[0]
+
+    def next(self, request_data=None, path=None, client_id=None):
+        h = self._hash_request(request_data, path, client_id) if request_data else "default"
+        now = datetime.now()
+        for k in self._keys:
+            rt = self._quota_reset_time.get(k)
+            if rt and now >= rt:
+                with self._lock:
+                    self._quota_exceeded[k] = False
+                    self._error_keys[k]     = False
+                    if k not in self._available_keys:
+                        self._available_keys.append(k)
+        if not self._available_keys:
+            self._implement_emergency_fallback()
+        while True:
+            k = self._select_best_key(h, client_id)
+            m = time.monotonic()
+            with self._lock:
+                # Add fingerprint-based jitter
+                fingerprint = self._key_fingerprints.get(k, {})
+                jitter_mul = fingerprint.get('jitter_multiplier', 1.0)
+                current_jitter = random.uniform(0, _REQUEST_JITTER * jitter_mul)
+                
+                if m - self._last_used[k] >= self._min_interval:
+                    self._last_used[k] = m + current_jitter
+                    self._key_usage[k] += 1
+                    # Assign a proxy to this key if needed
+                    if _IP_ROTATION and self._proxies and k not in self._key_to_proxy:
+                        proxy_index = (self._proxy_index % len(self._proxies))
+                        self._key_to_proxy[k] = self._proxies[proxy_index]
+                        self._proxy_index += 1
+                    return k
+            time.sleep(fingerprint.get('min_delay', 0.02))
+
+    def get_proxy_for_key(self, key):
+        """Get the proxy assigned to this key, if any"""
+        return self._key_to_proxy.get(key)
+
+    def cache_response(self, request_hash, response_data, status_code):
+        if status_code == 200 and response_data:
+            self._response_cache[request_hash] = {
+                "data": response_data,
+                "expires": time.time() + self._cache_ttl,
+                "status": status_code
+            }
+
+    def get_cached_response(self, request_hash):
+        if request_hash in self._response_cache:
+            entry = self._response_cache[request_hash]
+            if time.time() < entry["expires"]:
+                logging.info(f"Cache hit for {request_hash[:8]}")
+                return entry["data"], entry["status"]
+        return None, None
+
+    def get_stats(self):
+        with self._lock:
+            return {
+                "total_keys": len(self._keys),
+                "available_keys": len(self._available_keys),
+                "usage_counts": self._key_usage.copy(),
+                "success_counts": self._success_count.copy(),
+                "failure_counts": self._failure_count.copy(),
+                "quota_exceeded_counts": self._quota_exceeded_count.copy(),
+                "error_counts": self._error_count.copy(),
+                "timeout_counts": self._timeout_count.copy(),
+                "min_interval": self._min_interval,
+                "proxies_used": len(self._key_to_proxy),
+                "active_proxies": len(set(self._key_to_proxy.values())),
+            }
+
+# Initialize key rotator
+_ROTATOR = AdvancedKeyRotator(_API_KEYS, _MIN_INTERVAL, _QUOTA_RESET_HOURS)
+
+# --------------------------------------------------------------------------- #
+# 4. FLASK PROXY                                                              #
+# --------------------------------------------------------------------------- #
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
+
+@app.after_request
+def _cors(resp: Response):
+    resp.headers["Access-Control-Allow-Origin"]  = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "*"
+    return resp
+
+def _get_client_id():
+    client_ip    = request.headers.get("X-Forwarded-For", request.remote_addr)
+    user_agent   = request.headers.get("User-Agent", "Unknown")
+    # Add additional entropy to make client ID less predictable
+    random_entropy = hashlib.md5(str(random.random()).encode()).hexdigest()[:8] if _STEALTH_MODE else ""
+    return f"{client_ip}_{hash(user_agent)%10000}_{random_entropy}"
+
+def _attempt_forward(method: str, path: str, data: bytes,
+                     headers: dict, args: dict, attempt: int = 0):
+    upstream = path.lstrip('/')
+    if upstream.startswith("gemini/"):
+        upstream = upstream[7:]
+
+    client_id      = _get_client_id()
+    optimized_data = _REQUEST_OPTIMIZER.optimize_payload(data, upstream)
+    if _STEALTH_MODE:
+        # Variable sleep to make traffic pattern look more human
+        time.sleep(random.uniform(0, _REQUEST_JITTER * 1.5))
+
+    req_hash, cache = _ROTATOR._hash_request(optimized_data, upstream, client_id), _ROTATOR.get_cached_response(_ROTATOR._hash_request(optimized_data, upstream, client_id))
+    if cache[0]:
+        return Response(cache[0], status=cache[1], mimetype='application/json')
+
+    api_key = _ROTATOR.next(optimized_data, upstream, client_id)
+    params  = dict(args); params.pop("key", None); params["key"] = api_key
+    
+    # Get fingerprint for this key
+    fingerprint = _ROTATOR.get_key_fingerprint(api_key)
+    
+    if _STEALTH_MODE:
+        headers = _REQUEST_OPTIMIZER.randomize_headers(headers)
+        
+        # Add some delay based on key fingerprint to simulate human behavior
+        jitter_mul = fingerprint.get('jitter_multiplier', 1.0)
+        min_delay = fingerprint.get('min_delay', 0.05)
+        time.sleep(min_delay + random.uniform(0, 0.3) * jitter_mul)
+
+    url = f"{_GEMINI_ROOT.rstrip('/')}/{upstream}"
+    
+    # Prepare proxies
+    proxy = _ROTATOR.get_proxy_for_key(api_key) if _IP_ROTATION else None
+    proxies = {'http': proxy, 'https': proxy} if proxy else None
+    
+    logging.info("%s → %s | client=%s | key=%s | proxy=%s", 
+                 method, upstream, client_id, api_key[-4:],
+                 "Yes" if proxy else "No")
+
+    try:
+        # Additional headers for obfuscation
+        if _STEALTH_MODE and random.random() < 0.3:
+            x_forwarded_for = _REQUEST_OPTIMIZER.get_random_ip()
+            headers['X-Forwarded-For'] = x_forwarded_for
+        
+        retry_backoff = _RETRY_BACKOFF ** attempt
+        
+        resp = requests.request(
+            method=method,
+            url=url,
+            params=params,
+            headers=headers,
+            data=optimized_data,
+            timeout=_REQUEST_TIMEOUT * (1 + attempt * 0.5),  # Increase timeout on retries
+            stream=True,
+            proxies=proxies,
+            verify=False if proxy else True,  # Disable SSL verification when using proxies
+        )
+
+        if resp.status_code != 200:
+            error_text = resp.text if hasattr(resp, 'text') else ""
+            
+            # Log all 400/429 errors
+            if resp.status_code == 400:
+                logging.error("400 error for key %s: %s", api_key[-8:], error_text)
+                if "API key expired" in error_text or "API key not valid" in error_text:
+                    _ROTATOR.mark_quota_exceeded(api_key)
+                    stats = _ROTATOR.get_stats()
+                    if stats["available_keys"] > 0 and attempt < _RETRY_ATTEMPTS:
+                        logging.info(f"Rotating key and retrying (attempt {attempt+1}/{_RETRY_ATTEMPTS})")
+                        time.sleep(retry_backoff)  # Back off exponentially
+                        _ROTATOR.track_client_pattern(client_id, req_hash, False)
+                        return _attempt_forward(method, path, data, headers, args, attempt + 1)
+                if "temperature" in error_text:
+                    logging.error(f"Parameter validation error: {error_text}")
+            elif resp.status_code == 429 and "quota" in error_text.lower():
+                _ROTATOR.mark_quota_exceeded(api_key)
+                stats = _ROTATOR.get_stats()
+                if stats["available_keys"] > 0 and attempt < _RETRY_ATTEMPTS:
+                    logging.info(f"Retrying after quota exceeded (attempt {attempt+1}/{_RETRY_ATTEMPTS})")
+                    time.sleep(retry_backoff)  # Back off exponentially
+                    _ROTATOR.track_client_pattern(client_id, req_hash, False)
+                    return _attempt_forward(method, path, data, headers, args, attempt + 1)
+            else:
+                _ROTATOR.mark_response(api_key, req_hash, resp.status_code)
+                if (resp.status_code >= 500 or resp.status_code == 403) and attempt < _RETRY_ATTEMPTS:
+                    stats = _ROTATOR.get_stats()
+                    if stats["available_keys"] > 1:
+                        logging.info(f"Retrying after {resp.status_code} error (attempt {attempt+1}/{_RETRY_ATTEMPTS})")
+                        time.sleep(retry_backoff)  # Back off exponentially
+                        return _attempt_forward(method, path, data, headers, args, attempt + 1)
+        else:
+            _ROTATOR.mark_response(api_key, req_hash, resp.status_code)
+            _ROTATOR.track_client_pattern(client_id, req_hash, True)
+
+        return resp
+
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout for key {api_key[-4:]} – marking and retrying")
+        _ROTATOR.mark_timeout(api_key)
+        
+        if attempt < _RETRY_ATTEMPTS:
+            stats = _ROTATOR.get_stats()
+            if stats["available_keys"] > 0:
+                time.sleep(retry_backoff)  # Back off exponentially
+                return _attempt_forward(method, path, data, headers, args, attempt + 1)
+                
+        return Response(json.dumps({
+            "error": {"code":504,"message":"Gateway timeout","status":"TIMEOUT"}
+        }), status=504, content_type="application/json")
+
+    except Exception as e:
+        logging.error(f"Proxy error: {e}")
+        
+        if attempt < _RETRY_ATTEMPTS:
+            time.sleep(retry_backoff)  # Back off exponentially
+            return _attempt_forward(method, path, data, headers, args, attempt + 1)
+            
+        return Response(json.dumps({
+            "error": {"code":500,"message":f"Proxy error: {e}","status":"INTERNAL"}
+        }), status=500, content_type="application/json")
+
+@app.route('/stats')
+def _stats():
+    stats = _ROTATOR.get_stats()
+    return Response(json.dumps({
+        "stats": stats,
+        "config": {
+            "min_interval":      _MIN_INTERVAL,
+            "quota_reset_hours": _QUOTA_RESET_HOURS,
+            "max_tokens":        _MAX_TOKENS,
+            "stealth_mode":      _STEALTH_MODE,
+            "request_timeout":   _REQUEST_TIMEOUT,
+            "ip_rotation":       _IP_ROTATION,
+            "retry_attempts":    _RETRY_ATTEMPTS,
+            "retry_backoff":     _RETRY_BACKOFF
+        }
+    }), content_type="application/json")
+
+@app.route('/', defaults={'path': ''},
+           methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
+@app.route('/<path:path>',
+           methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"])
+def _proxy(path: str):
+    if request.method == "OPTIONS":
+        return "", 204
+
+    data    = request.get_data()
+    hdrs    = {k:v for k,v in request.headers if k.lower() not in ("host","content-length","connection")}
+    if path.endswith(":streamGenerateContent"):
+        hdrs["Accept"] = "text/event-stream"
+
+    resp = _attempt_forward(request.method, path, data, hdrs, request.args)
+    if isinstance(resp, Response):
+        return resp
+
+    if resp.status_code != 200:
+        logging.warning("Upstream returned %d: %s", resp.status_code, getattr(resp, 'text', '')[:200])
+
+    excluded = {"content-encoding","transfer-encoding","connection","content-length"}
+    if not path.endswith(":streamGenerateContent") and resp.status_code == 200:
+        content = resp.content
+        h = _ROTATOR._hash_request(data, path, _get_client_id())
+        _ROTATOR.cache_response(h, content, resp.status_code)
+        proxy_resp = Response(content, status=resp.status_code, content_type=resp.headers.get("content-type"))
+    else:
+        ctype = resp.headers.get("content-type")
+        if path.endswith(":streamGenerateContent") and resp.status_code == 200:
+            ctype = "text/event-stream"
+        proxy_resp = Response(stream_with_context(resp.iter_content(chunk_size=8192)),
+                              status=resp.status_code, content_type=ctype)
+
+    for k,v in resp.headers.items():
+        if k.lower() not in excluded:
+            proxy_resp.headers[k] = v
+    if path.endswith(":streamGenerateContent") and resp.status_code == 200:
+        proxy_resp.headers["Cache-Control"]    = "no-cache"
+        proxy_resp.headers["X-Accel-Buffering"] = "no"
+
+    return proxy_resp
+
+# --------------------------------------------------------------------------- #
+# 5. ENTRY-POINT                                                              #
+# --------------------------------------------------------------------------- #
+if __name__ == "__main__":
+    port = int(os.getenv("PORT","8000"))
+    logging.info("Starting Enhanced Gemini stealth proxy on port %d with %d keys", port, len(_API_KEYS))
+    logging.info("Per-key interval: %.2fs, Quota reset: %.1f hours, Stealth mode: %s, IP rotation: %s",
+                 _MIN_INTERVAL, _QUOTA_RESET_HOURS, 
+                 "ON" if _STEALTH_MODE else "OFF",
+                 "ON" if _IP_ROTATION else "OFF")
+    app.run(host="0.0.0.0", port=port, threaded=True)
