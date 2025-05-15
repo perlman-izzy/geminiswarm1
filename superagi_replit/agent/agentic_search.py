@@ -10,15 +10,17 @@ This module implements a more powerful, tool-using agentic search capability tha
 import re
 import time
 import json
+import random
 import logging
+import requests
 from typing import List, Dict, Any, Optional, Tuple, Set, Union, cast
 
 from superagi_replit.lib.logger import logger
 from superagi_replit.agent.non_llm_task_validator import NonLLMTaskValidator
-import requests
 
 
-class APIClient:
+# Class name differentiated to avoid conflict in import
+class SearchAPIClient:
     """
     Simple API client interface for the AgenticSearch class.
     Handles communication with various endpoints in the main application.
@@ -33,70 +35,240 @@ class APIClient:
         """
         self.base_url = base_url
         
-    def call_gemini(self, prompt: str, priority: str = "low") -> Dict[str, Any]:
+    def call_gemini(self, prompt: str, priority: str = "low", max_retries: int = 3) -> Dict[str, Any]:
         """
-        Call the Gemini API.
+        Call the Gemini API with retry mechanism for rate limits.
         
         Args:
             prompt: The prompt to send
             priority: Priority level (low or high)
+            max_retries: Maximum number of retries for rate-limited requests
             
         Returns:
             Response from the API
         """
-        try:
-            response = requests.post(
-                f"{self.base_url}/gemini",
-                json={"prompt": prompt, "priority": priority}
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error calling Gemini API: {e}")
-            return {"status": "error", "response": str(e)}
+        retry_count = 0
+        base_delay = 2  # Base delay in seconds for exponential backoff
         
-    def web_search(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        while retry_count <= max_retries:
+            try:
+                logger.info(f"Making Gemini API call (attempt {retry_count+1}/{max_retries+1})")
+                
+                # Try using anthropic as fallback if this is a retry
+                use_fallback = retry_count > 0
+                
+                response = requests.post(
+                    f"{self.base_url}/gemini",
+                    json={
+                        "prompt": prompt, 
+                        "priority": priority,
+                        "use_fallback": use_fallback
+                    },
+                    timeout=30  # Set a timeout to avoid hanging indefinitely
+                )
+                
+                # Handle rate limiting specifically
+                if response.status_code == 429:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        # Exponential backoff with jitter
+                        delay = base_delay * (2 ** retry_count) + random.uniform(0, 1)
+                        logger.warning(f"Rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error("Max retries exceeded for rate limit")
+                        return {
+                            "status": "error", 
+                            "response": "Rate limit exceeded. Please try again later.",
+                            "fallback_response": "The system is currently experiencing high demand. Please try a simpler search or try again later."
+                        }
+                
+                response.raise_for_status()
+                return response.json()
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"Request timed out (attempt {retry_count+1})")
+                retry_count += 1
+                delay = base_delay * (2 ** retry_count)
+                time.sleep(delay)
+                
+                # If we've exhausted retries for timeouts
+                if retry_count > max_retries:
+                    return {
+                        "status": "error",
+                        "response": "Request timed out repeatedly",
+                        "fallback_response": "The system is taking too long to respond. Please try a simpler query."
+                    }
+                continue
+                
+            except Exception as e:
+                logger.error(f"Error calling Gemini API: {e}")
+                
+                # If it's a rate limit error, retry with backoff
+                if "429" in str(e) or "rate limit" in str(e).lower():
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        delay = base_delay * (2 ** retry_count)
+                        logger.warning(f"Rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                
+                return {
+                    "status": "error", 
+                    "response": str(e),
+                    "fallback_response": "An error occurred while processing your request. Please try again with a simpler query."
+                }
+        
+        # This should never be reached, but adding as a fallback for the type checker
+        return {
+            "status": "error",
+            "response": "Unknown error occurred",
+            "fallback_response": "An unexpected error occurred. Please try again."
+        }
+        
+    def web_search(self, query: str, max_results: int = 10, max_retries: int = 2) -> Dict[str, Any]:
         """
-        Perform a web search.
+        Perform a web search with retry logic.
         
         Args:
             query: Search query
             max_results: Maximum number of results
+            max_retries: Maximum number of retries
             
         Returns:
             Dictionary with search results
         """
-        try:
-            response = requests.post(
-                f"{self.base_url}/web_search",
-                json={"query": query, "max_results": max_results, "agentic": False}
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error performing web search: {e}")
-            return {"status": "error", "results": []}
+        retry_count = 0
+        base_delay = 1  # Base delay in seconds
         
-    def scrape_text(self, url: str) -> Dict[str, Any]:
+        while retry_count <= max_retries:
+            try:
+                logger.info(f"Making web search call (attempt {retry_count+1}/{max_retries+1})")
+                
+                response = requests.post(
+                    f"{self.base_url}/web_search",
+                    json={"query": query, "max_results": max_results, "agentic": False},
+                    timeout=20
+                )
+                
+                # Handle specific rate limiting
+                if response.status_code == 429:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        delay = base_delay * (2 ** retry_count)
+                        logger.warning(f"Search rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        # Return empty results with a warning
+                        return {
+                            "status": "warning", 
+                            "results": [],
+                            "message": "Search rate limit exceeded. Using fallback information."
+                        }
+                
+                response.raise_for_status()
+                return response.json()
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"Web search request timed out (attempt {retry_count+1})")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    delay = base_delay * (2 ** retry_count)
+                    time.sleep(delay)
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"Error performing web search: {e}")
+                
+                # If it's a rate limit error, retry
+                if "429" in str(e) or "rate limit" in str(e).lower() or "ratelimit" in str(e).lower():
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        delay = base_delay * (2 ** retry_count)
+                        logger.warning(f"Search rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                
+                # For other errors, return empty results
+                return {
+                    "status": "error", 
+                    "results": [],
+                    "message": f"Search failed: {str(e)}"
+                }
+        
+        # If we've exhausted retries
+        return {"status": "error", "results": [], "message": "Maximum retries exceeded"}
+        
+    def scrape_text(self, url: str, max_retries: int = 2) -> Dict[str, Any]:
         """
-        Scrape text from a URL.
+        Scrape text from a URL with retry logic.
         
         Args:
             url: URL to scrape
+            max_retries: Maximum number of retries
             
         Returns:
             Dictionary with scraped content
         """
-        try:
-            response = requests.post(
-                f"{self.base_url}/scrape_text",
-                json={"url": url}
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error scraping text: {e}")
-            return {"status": "error", "content": ""}
+        retry_count = 0
+        base_delay = 1  # Base delay in seconds
+        
+        while retry_count <= max_retries:
+            try:
+                logger.info(f"Making scrape request (attempt {retry_count+1}/{max_retries+1})")
+                
+                response = requests.post(
+                    f"{self.base_url}/scrape_text",
+                    json={"url": url},
+                    timeout=25  # Longer timeout for scraping
+                )
+                
+                if response.status_code == 429:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        delay = base_delay * (2 ** retry_count)
+                        logger.warning(f"Scrape rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                
+                response.raise_for_status()
+                return response.json()
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"Scrape request timed out (attempt {retry_count+1})")
+                retry_count += 1
+                if retry_count <= max_retries:
+                    delay = base_delay * (2 ** retry_count)
+                    time.sleep(delay)
+                    continue
+                
+            except Exception as e:
+                logger.error(f"Error scraping text: {e}")
+                
+                # If it's a rate limit error, retry
+                if "429" in str(e) or "rate limit" in str(e).lower():
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        delay = base_delay * (2 ** retry_count)
+                        logger.warning(f"Scrape rate limit hit, retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                        continue
+                
+                # Extract domain from URL for the message
+                try:
+                    domain = url.split("//")[1].split("/")[0]
+                except:
+                    domain = url
+                    
+                return {
+                    "status": "error", 
+                    "content": f"Unable to retrieve content from {domain}. The site may be unavailable or have restrictions."
+                }
+        
+        # If we've exhausted retries
+        return {"status": "error", "content": "Failed to retrieve content after multiple attempts"}
 
 
 class SearchSource:
