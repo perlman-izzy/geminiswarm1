@@ -408,24 +408,21 @@ class AgenticSearch:
                 refinement["is_complete"] = False
                 
             if "next_searches" not in refinement or not refinement["next_searches"]:
-                # Generate some fallback refinement searches
+                # Fallback: generate some generic refinement searches
+                query = self.search_state["query"]
                 refinement["next_searches"] = [
-                    f"{self.search_state['query']} best rated locations",
-                    f"{self.search_state['query']} specific details",
-                    f"{self.search_state['query']} exact information verified"
+                    f"{query} exact locations",
+                    f"{query} address details specific"
                 ]
                 
             return refinement
-            
         except Exception as e:
             logger.error(f"Error generating search refinement: {e}")
-            # Return a basic refinement
+            # Fallback refinement
             return {
                 "is_complete": False,
-                "missing_aspects": ["specific details", "quality information", "requirements"],
                 "next_searches": [
-                    f"{self.search_state['query']} best rated locations",
-                    f"{self.search_state['query']} specific details",
+                    f"{self.search_state['query']} specific locations details",
                     f"{self.search_state['query']} exact information verified"
                 ]
             }
@@ -452,59 +449,58 @@ class AgenticSearch:
         Returns:
             Dictionary with validation results
         """
-        # Check if we have enough results to validate
-        if len(self.search_state["refined_results"]) < 3:
-            return {"is_valid": False, "score": 0.2, "feedback": "Not enough results yet"}
-            
-        # Get all the extracted information we've gathered
-        all_info = "\n\n".join([
-            f"Source: {result.get('source', 'Unknown')}\n"
-            f"Information: {result.get('extracted_info', {}).get('extracted_text', 'No information')}"
-            for result in self.search_state["refined_results"][:5]  # Limit to 5 results
+        # Package current results for validation
+        current_results = self.search_state["refined_results"]
+        
+        # Generate a comprehensive summary of what we've found
+        results_summary = "\n".join([
+            f"SOURCE: {result.get('source', 'Unknown source')}\n" +
+            f"INFORMATION: {result.get('extracted_info', {}).get('extracted_text', 'No text')}\n"
+            for result in current_results
         ])
         
-        # Call the API to validate the results
+        # Call the API to validate results
         prompt = f"""
-        As an expert validator, assess the completeness, specificity, and accuracy of 
-        the search results for this query:
+        Validate the following search results for completeness, accuracy, and specificity.
         
-        QUERY: {self.search_state["query"]}
+        ORIGINAL QUERY: {self.search_state["query"]}
         
         SEARCH RESULTS:
-        {all_info}
+        {results_summary}
         
-        Evaluate the results on these criteria:
-        1. COMPLETENESS: Do the results fully address the query? Are there missing aspects?
-        2. SPECIFICITY: Do the results include specific details like exact locations, addresses, etc.?
-        3. QUALITY: Do the results include relevant quality indicators (e.g., ratings, reviews)?
-        4. ACTIONABILITY: Based on these results, could someone take clear action?
+        Validate these results based on the following criteria:
+        1. Completeness: Do the results fully answer the query with all necessary details?
+        2. Specificity: Are locations, addresses, and details specific (not general)?
+        3. Actionability: Could someone take direct action based on these results?
+        4. Verification: Are multiple sources confirming the same information?
         
-        Provide your assessment as a JSON object with these fields:
-        - is_valid: boolean indicating if the results are adequate
-        - score: number from 0.0 to 1.0 rating the overall quality
-        - feedback: detailed feedback explaining the assessment
-        - missing_aspects: list of any key missing information
+        Provide your response as a JSON object with these fields:
+        - is_valid: boolean indicating if the results are satisfactory
+        - score: validation score from 0.0 to 1.0
+        - feedback: specific feedback on what's missing or could be improved
+        - missing_elements: list of specific elements still missing from the results
         """
         
         try:
             response = self.api_client.call_gemini(prompt, "high")
             
-            # Extract the validation result
-            result_text = response.get("response", "{}")
-            result = self._extract_json_object(result_text)
+            # Extract the JSON object from the response
+            validation_text = response.get("response", "{}")
+            validation = self._extract_json_object(validation_text)
             
-            # Store the validation results in the search state
-            self.search_state["validation_score"] = result.get("score", 0.0)
-            self.search_state["validation_feedback"] = result.get("feedback", "")
+            # Store validation data
+            self.search_state["validation_score"] = validation.get("score", 0.0)
+            self.search_state["validation_feedback"] = validation.get("feedback", "")
             
-            # Ensure basic fields are present
-            if "is_valid" not in result:
-                result["is_valid"] = result.get("score", 0.0) >= 0.7
+            # Ensure we have required fields
+            if "is_valid" not in validation:
+                is_valid = self.search_state["validation_score"] >= 0.8
+                validation["is_valid"] = is_valid
                 
-            return result
-            
+            return validation
         except Exception as e:
             logger.error(f"Error validating results: {e}")
+            # Fallback validation
             return {
                 "is_valid": False,
                 "score": 0.5,
@@ -590,65 +586,73 @@ class AgenticSearch:
                     for i, result in enumerate(self.search_state["refined_results"][:3])
                 ]
             }]
+        """
+        
+        try:
+            response = self.api_client.call_gemini(prompt, "high")
+            
+            # Process the synthesized response
+            synthesized_text = response.get("response", "")
+            
+            # Split the synthesized text into sections based on locations/venues
+            sections = self._split_into_sections(synthesized_text)
+            
+            # Format as a list of result objects
+            return [
+                {
+                    "title": section.get("title", "Results"),
+                    "content": section.get("content", ""),
+                    "model_used": response.get("model_used", "unknown")
+                }
+                for section in sections
+            ]
+        except Exception as e:
+            logger.error(f"Error synthesizing results: {e}")
+            # Fallback: return raw results
+            return [
+                {
+                    "source": result.get("source", "Unknown source"),
+                    "content": result.get("extracted_info", {}).get("extracted_text", "No text")
+                }
+                for result in current_results
+            ]
     
     def _split_into_sections(self, text: str) -> List[Dict[str, str]]:
         """Split synthesized text into logical sections."""
+        # If the text has clear section headers (e.g., with ## markdown)
         sections = []
+        current_title = "Results"
+        current_content = []
         
-        # Try to split by headings
-        heading_pattern = r"(?:^|\n)#+\s+(.*?)(?:\n|$)"
-        headings = re.finditer(heading_pattern, text, re.MULTILINE)
-        
-        last_pos = 0
-        current_title = "Introduction"
-        
-        for match in headings:
-            heading_pos = match.start()
-            heading_title = match.group(1).strip()
-            
-            # If we have content before this heading, add it as a section
-            if heading_pos > last_pos:
-                section_content = text[last_pos:heading_pos].strip()
-                if section_content:
+        for line in text.split('\n'):
+            if re.match(r'^#+\s+', line) or re.match(r'^[A-Z][\w\s]+:', line):
+                # If we were collecting content for a previous section, save it
+                if current_content:
                     sections.append({
                         "title": current_title,
-                        "content": section_content
+                        "content": '\n'.join(current_content)
                     })
-            
-            current_title = heading_title
-            last_pos = match.end()
-        
-        # Add the final section
-        if last_pos < len(text):
-            final_content = text[last_pos:].strip()
-            if final_content:
-                sections.append({
-                    "title": current_title,
-                    "content": final_content
-                })
-        
-        # If no headings were found, try to split by newlines
-        if not sections:
-            paragraphs = text.split("\n\n")
-            if len(paragraphs) > 1:
-                # Use the first paragraph as an introduction
-                sections.append({
-                    "title": "Introduction",
-                    "content": paragraphs[0]
-                })
                 
-                # Group the rest into a results section
-                sections.append({
-                    "title": "Results",
-                    "content": "\n\n".join(paragraphs[1:])
-                })
+                # Start a new section
+                current_title = line.strip('#: ')
+                current_content = []
             else:
-                # Just use the whole text as one section
-                sections.append({
-                    "title": "Results",
-                    "content": text
-                })
-                
+                current_content.append(line)
+        
+        # Add the last section
+        if current_content:
+            sections.append({
+                "title": current_title,
+                "content": '\n'.join(current_content)
+            })
+        
+        # If no clear sections were found, create a single section
+        if not sections:
+            sections.append({
+                "title": "Results",
+                "content": text
+            })
+            
         return sections
 
 
