@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-Simplified Gemini stealth proxy with essential features
-A more reliable version that avoids complex type issues
+Multi-provider stealth proxy for handling API rate limits
+Integrates Gemini as primary with fallbacks to OpenAI and Anthropic
 """
 
 import os
 import logging
+import json
 import requests
 import random
 import time
-import json
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("fallback_proxy")
+logger = logging.getLogger("multi_provider_proxy")
 
-# Import API keys from existing config
+# Import API keys from config
 try:
-    from config import GEMINI_API_KEYS
+    from config import GEMINI_API_KEYS, OPENAI_API_KEY, ANTHROPIC_API_KEY
     API_KEYS = GEMINI_API_KEYS
 except ImportError:
     # Default fallback if config import fails
@@ -27,21 +27,39 @@ except ImportError:
         os.environ.get("GOOGLE_API_KEY2", ""),
         os.environ.get("GOOGLE_API_KEY3", ""),
     ]
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
     
 # Filter out empty keys
 API_KEYS = [key for key in API_KEYS if key]
 
 # Runtime configuration
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1"
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 2.0
 
-class FallbackProxy:
-    """Simpler implementation of the stealth proxy"""
+# Model mappings for different providers
+MODEL_MAPPINGS = {
+    "gemini-1.5-pro": {
+        "openai": "gpt-4o",  # Map to equivalent OpenAI model
+        "anthropic": "claude-3-5-sonnet-20241022"  # Map to equivalent Anthropic model
+    },
+    "gemini-1.5-flash": {
+        "openai": "gpt-3.5-turbo",
+        "anthropic": "claude-3-haiku-20240307"
+    },
+    "gemini-1.0-pro": {
+        "openai": "gpt-4-turbo",
+        "anthropic": "claude-3-opus-20240229"
+    }
+}
+
+class MultiProviderProxy:
+    """Proxy that automatically falls back to alternative providers when rate limited"""
     
     def __init__(self):
-        """Initialize the proxy"""
+        """Initialize the proxy with multiple provider support"""
+        # Gemini specific configuration
         self.api_keys = API_KEYS.copy()
         self.rate_limited_keys = set()
         self.key_index = 0
@@ -55,9 +73,19 @@ class FallbackProxy:
         self.success_count = 0
         
         # Request limiter settings
-        self.requests_per_minute = 10     # Target requests per minute
-        self.request_window = 60.0        # Window size in seconds
-        self.request_timestamps = []       # Store timestamps of recent requests
+        self.requests_per_minute = 10    # Target requests per minute
+        self.request_window = 60.0       # Window size in seconds
+        self.request_timestamps = []     # Store timestamps of recent requests
+        
+        # Provider fallback settings
+        self.gemini_consecutive_failures = 0
+        self.max_gemini_failures = 5     # After this many failures, try alternate providers
+        self.provider_priority = ["gemini", "openai", "anthropic"]
+        self.provider_availability = {
+            "gemini": True,
+            "openai": OPENAI_API_KEY != "",
+            "anthropic": ANTHROPIC_API_KEY != ""
+        }
         
         # Browser fingerprinting
         self.user_agents = [
@@ -69,14 +97,14 @@ class FallbackProxy:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
         ]
         
-        self.accept_languages = [
-            "en-US,en;q=0.9",
-            "en-GB,en;q=0.9",
-            "en-CA,en;q=0.9,fr-CA;q=0.8",
-            "en-AU,en;q=0.9",
-        ]
-        
-        logger.info(f"Enhanced fallback proxy initialized with {len(self.api_keys)} API keys")
+        # Log initialization status
+        if not API_KEYS:
+            logger.warning("No Gemini API keys available")
+        else:
+            logger.info(f"Multi-provider proxy initialized with {len(self.api_keys)} Gemini API keys")
+            
+        logger.info(f"OpenAI integration: {'Available' if self.provider_availability['openai'] else 'Not available'}")
+        logger.info(f"Anthropic integration: {'Available' if self.provider_availability['anthropic'] else 'Not available'}")
         
     def get_next_key(self) -> str:
         """Get the next available API key using a smart selection strategy"""
@@ -104,7 +132,7 @@ class FallbackProxy:
         self.key_usage_count[least_used_key] += 1
         
         return least_used_key
-        
+    
     def _enforce_rate_limit(self) -> float:
         """
         Enforce self-imposed rate limits to avoid triggering API rate limits
@@ -136,13 +164,17 @@ class FallbackProxy:
             return sleep_time
             
         return 0
-            
+        
     def mark_rate_limited(self, key: str) -> None:
         """Mark a key as rate limited and apply global backoff"""
         if key and key not in self.rate_limited_keys:
             self.rate_limited_keys.add(key)
             logger.warning(f"API key marked as rate limited")
             logger.info(f"Currently {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
+            
+            # Increment consecutive failure counter
+            self.gemini_consecutive_failures += 1
+            logger.info(f"Gemini consecutive failures: {self.gemini_consecutive_failures}")
             
             # Set global backoff if many keys are rate limited
             rate_limited_ratio = len(self.rate_limited_keys) / len(self.api_keys)
@@ -244,7 +276,7 @@ class FallbackProxy:
         for header in headers_to_remove:
             if header not in ["User-Agent", "Content-Type", "Accept"]:  # Keep essential headers
                 headers.pop(header, None)
-        
+                
         return headers
     
     def optimize_request_payload(self, prompt: str) -> Dict[str, Any]:
@@ -288,18 +320,162 @@ class FallbackProxy:
             },
             "safetySettings": safety_settings
         }
-    
-    def generate_content(self, prompt: str, model: str = "gemini-1.5-pro") -> Dict[str, Any]:
-        """
-        Generate content using the Gemini API
-        
-        Args:
-            prompt: The prompt text
-            model: Model name
+
+    def _call_openai(self, prompt: str, model: str = "gpt-4o") -> Dict[str, Any]:
+        """Call OpenAI API with the given prompt"""
+        if not OPENAI_API_KEY:
+            return {
+                "text": "Error: OpenAI API key not available",
+                "model_used": model,
+                "status": "error"
+            }
             
-        Returns:
-            Response dictionary
-        """
+        logger.info(f"Falling back to OpenAI API with model {model}")
+        
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+        
+        # Format the request data for OpenAI's API
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 4096,
+        }
+        
+        try:
+            response = requests.post(
+                url=url,
+                json=data,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    text = result["choices"][0]["message"]["content"]
+                    return {
+                        "text": text,
+                        "model_used": model,
+                        "provider": "openai",
+                        "status": "success"
+                    }
+                except (KeyError, IndexError) as e:
+                    return {
+                        "text": f"Error parsing OpenAI response: {str(e)}",
+                        "model_used": model,
+                        "provider": "openai",
+                        "status": "error"
+                    }
+            else:
+                error_msg = "Unknown error"
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data["error"].get("message", str(error_data["error"]))
+                except:
+                    error_msg = f"API Error: Status code {response.status_code}"
+                
+                return {
+                    "text": f"Error from OpenAI API: {error_msg}",
+                    "model_used": model,
+                    "provider": "openai",
+                    "status": "error"
+                }
+                
+        except Exception as e:
+            return {
+                "text": f"Error calling OpenAI API: {str(e)}",
+                "model_used": model,
+                "provider": "openai",
+                "status": "error"
+            }
+
+    def _call_anthropic(self, prompt: str, model: str = "claude-3-5-sonnet-20241022") -> Dict[str, Any]:
+        """Call Anthropic API with the given prompt"""
+        if not ANTHROPIC_API_KEY:
+            return {
+                "text": "Error: Anthropic API key not available",
+                "model_used": model,
+                "status": "error"
+            }
+            
+        logger.info(f"Falling back to Anthropic API with model {model}")
+        
+        url = "https://api.anthropic.com/v1/messages"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01"
+        }
+        
+        # Format the request data for Anthropic's API
+        data = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 4096,
+            "temperature": 0.7
+        }
+        
+        try:
+            response = requests.post(
+                url=url,
+                json=data,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    text = result["content"][0]["text"]
+                    return {
+                        "text": text,
+                        "model_used": model,
+                        "provider": "anthropic",
+                        "status": "success"
+                    }
+                except (KeyError, IndexError) as e:
+                    return {
+                        "text": f"Error parsing Anthropic response: {str(e)}",
+                        "model_used": model,
+                        "provider": "anthropic",
+                        "status": "error"
+                    }
+            else:
+                error_msg = "Unknown error"
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data["error"]
+                except:
+                    error_msg = f"API Error: Status code {response.status_code}"
+                
+                return {
+                    "text": f"Error from Anthropic API: {error_msg}",
+                    "model_used": model,
+                    "provider": "anthropic",
+                    "status": "error"
+                }
+                
+        except Exception as e:
+            return {
+                "text": f"Error calling Anthropic API: {str(e)}",
+                "model_used": model,
+                "provider": "anthropic",
+                "status": "error"
+            }
+            
+    def _call_gemini(self, prompt: str, model: str) -> Dict[str, Any]:
+        """Call Gemini API with the given prompt"""
         # Ensure model has proper prefix
         if not model.startswith("models/"):
             model = f"models/{model}"
@@ -329,6 +505,7 @@ class FallbackProxy:
                 return {
                     "text": "Error: No API keys available",
                     "model_used": model,
+                    "provider": "gemini",
                     "status": "error"
                 }
                 
@@ -387,6 +564,16 @@ class FallbackProxy:
                 if response.status_code == 429:
                     self.mark_rate_limited(api_key)
                     
+                    # Check if we've hit too many rate limits
+                    if self.gemini_consecutive_failures >= self.max_gemini_failures:
+                        logger.warning(f"Too many consecutive Gemini failures ({self.gemini_consecutive_failures}), will try alternate providers")
+                        return {
+                            "text": "Error: Gemini API rate limited, falling back to alternates",
+                            "model_used": model,
+                            "provider": "gemini",
+                            "status": "rate_limited"
+                        }
+                    
                     # Apply exponential backoff with jitter
                     if attempt < MAX_RETRIES - 1:
                         # Calculate backoff time: base^attempt * (1 + jitter)
@@ -405,6 +592,7 @@ class FallbackProxy:
                         return {
                             "text": "Error: Rate limit exceeded on all available API keys",
                             "model_used": model,
+                            "provider": "gemini",
                             "status": "error"
                         }
                 
@@ -420,10 +608,14 @@ class FallbackProxy:
                             self.successful_keys.add(api_key)
                             self.success_count += 1
                             
+                            # Reset consecutive failure counter on success
+                            self.gemini_consecutive_failures = 0
+                            
                             logger.info(f"Successfully generated content with {model}")
                             return {
                                 "text": text,
                                 "model_used": model,
+                                "provider": "gemini",
                                 "status": "success"
                             }
                 
@@ -432,21 +624,27 @@ class FallbackProxy:
                 try:
                     error_data = response.json()
                     if "error" in error_data:
-                        if "message" in error_data["error"]:
+                        if isinstance(error_data["error"], dict) and "message" in error_data["error"]:
                             error_msg = error_data["error"]["message"]
                         else:
                             error_msg = str(error_data["error"])
                 except:
                     error_msg = f"API Error: Status code {response.status_code}"
                 
+                # Increment failure counter
+                self.gemini_consecutive_failures += 1
+                
                 return {
                     "text": f"Error: {error_msg}",
                     "model_used": model,
+                    "provider": "gemini",
                     "status": "error"
                 }
                 
             except Exception as e:
                 logger.error(f"Request failed: {str(e)}")
+                self.gemini_consecutive_failures += 1
+                
                 if attempt < MAX_RETRIES - 1:
                     backoff = BACKOFF_FACTOR ** attempt * (1 + random.uniform(0, 0.1))
                     logger.info(f"Waiting {backoff:.2f}s before retry")
@@ -457,6 +655,79 @@ class FallbackProxy:
         return {
             "text": "Error: All API requests failed after multiple attempts",
             "model_used": model,
+            "provider": "gemini",
+            "status": "error"
+        }
+    
+    def generate_content(self, prompt: str, model: str = "gemini-1.5-pro") -> Dict[str, Any]:
+        """
+        Generate content using a multi-provider approach with fallbacks
+        
+        Args:
+            prompt: The text prompt
+            model: Primary model name (Gemini model)
+            
+        Returns:
+            Response dictionary with text, model_used, provider and status
+        """
+        # Try providers in order based on availability and priority
+        available_providers = [p for p in self.provider_priority if self.provider_availability[p]]
+        
+        # If Gemini has failed too many times recently, adjust the provider priority
+        if self.gemini_consecutive_failures >= self.max_gemini_failures and "gemini" in available_providers:
+            # Move Gemini to the end of the priority list
+            available_providers.remove("gemini")
+            available_providers.append("gemini")
+            logger.info("Adjusted provider priority due to Gemini failures")
+        
+        # Try each provider in priority order
+        for provider in available_providers:
+            # Skip provider if not available
+            if not self.provider_availability[provider]:
+                continue
+                
+            if provider == "gemini":
+                result = self._call_gemini(prompt, model)
+                
+                # If successful or a definitive error (not rate limiting), return the result
+                if result["status"] in ["success", "error"] and "rate limit" not in result["text"].lower():
+                    return result
+                    
+                # If rate limited, continue to next provider
+                logger.warning("Gemini API rate limited, trying next provider")
+                
+            elif provider == "openai":
+                # Map Gemini model to equivalent OpenAI model
+                model_base = model.replace("models/", "")
+                openai_model = MODEL_MAPPINGS.get(model_base, {}).get("openai", "gpt-4o")
+                
+                # Call OpenAI API
+                result = self._call_openai(prompt, openai_model)
+                if result["status"] == "success":
+                    return result
+                    
+                # Log error and continue to next provider
+                logger.warning(f"OpenAI API failed: {result['text']}")
+                
+            elif provider == "anthropic":
+                # Map Gemini model to equivalent Anthropic model
+                model_base = model.replace("models/", "")
+                anthropic_model = MODEL_MAPPINGS.get(model_base, {}).get("anthropic", "claude-3-5-sonnet-20241022")
+                
+                # Call Anthropic API
+                result = self._call_anthropic(prompt, anthropic_model)
+                if result["status"] == "success":
+                    return result
+                    
+                # Log error and continue to next provider
+                logger.warning(f"Anthropic API failed: {result['text']}")
+        
+        # If we've tried all providers and none worked, return the last error
+        logger.error("All providers failed")
+        return {
+            "text": "Error: All AI providers failed to generate content",
+            "model_used": model,
+            "provider": "none",
             "status": "error"
         }
 
@@ -467,34 +738,35 @@ def get_proxy():
     """Get the singleton proxy instance"""
     global _proxy
     if _proxy is None:
-        _proxy = FallbackProxy()
+        _proxy = MultiProviderProxy()
     return _proxy
 
 def generate_content(prompt: str, model: str = "gemini-1.5-pro", 
                     temperature: float = 0.7, max_output_tokens: int = 4096) -> Dict[str, Any]:
     """
-    Generate content using the fallback proxy
+    Generate content using the multi-provider proxy
     
     Args:
         prompt: The text prompt
         model: Model name
-        temperature: Not used in this fallback version
-        max_output_tokens: Not used in this fallback version
+        temperature: Not directly used (optimized inside proxy)
+        max_output_tokens: Not directly used (optimized inside proxy)
         
     Returns:
-        Response with text, model_used, and status
+        Response with text, model_used, provider and status
     """
     proxy = get_proxy()
     return proxy.generate_content(prompt, model)
 
 def test_proxy():
-    """Test the fallback proxy"""
-    print("Testing enhanced fallback proxy...")
+    """Test the multi-provider proxy"""
+    print("Testing multi-provider proxy...")
     
     # Try a simple request first
     print("\nTest 1: Basic request")
     result = generate_content("Write a haiku about programming.")
     print(f"Status: {result['status']}")
+    print(f"Provider: {result.get('provider', 'unknown')}")
     print(f"Model: {result['model_used']}")
     print(f"Text: {result['text'][:100]}..." if len(result.get('text', '')) > 100 else f"Text: {result.get('text', '')}")
     
@@ -504,6 +776,7 @@ def test_proxy():
         time.sleep(3)  # Short delay
         result2 = generate_content("Explain quantum computing in one sentence.")
         print(f"Status: {result2['status']}")
+        print(f"Provider: {result2.get('provider', 'unknown')}")
         print(f"Model: {result2['model_used']}")
         print(f"Text: {result2['text'][:100]}..." if len(result2.get('text', '')) > 100 else f"Text: {result2.get('text', '')}")
     
@@ -514,6 +787,7 @@ def test_proxy():
     print(f"- Rate limited keys: {len(proxy.rate_limited_keys)}")
     print(f"- Successful keys: {len(proxy.successful_keys)}")
     print(f"- Success count: {proxy.success_count}")
+    print(f"- Available providers: {[p for p in proxy.provider_priority if proxy.provider_availability[p]]}")
     
 if __name__ == "__main__":
     test_proxy()
