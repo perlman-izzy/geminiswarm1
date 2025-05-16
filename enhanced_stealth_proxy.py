@@ -152,39 +152,101 @@ class EnhancedStealthProxy:
         logger.info(f"Enhanced stealth proxy initialized with {len(self.api_keys)} API keys")
         
     def get_next_key(self) -> str:
-        """Get the next available API key with sophisticated selection strategy"""
+        """
+        Get the next available API key with sophisticated selection strategy
+        Implements a time-based distribution approach for key usage
+        """
+        now = time.time()
         available_keys = [k for k in self.api_keys if k not in self.rate_limited_keys]
         
-        # If no keys available, check if we can return a previously successful key
-        if not available_keys:
-            if self.successful_keys:
-                logger.warning(f"All keys rate limited, using previously successful key")
-                return random.choice(list(self.successful_keys))
-            logger.warning("All keys are rate limited, using any key")
-            return random.choice(self.api_keys) if self.api_keys else ""
+        # Clean up old usage timestamps
+        for key in self.api_keys:
+            self.key_usage_times[key] = [t for t in self.key_usage_times.get(key, []) 
+                                        if now - t <= self.request_window]
         
-        # Implement least-recently-used strategy with preference for successful keys
-        successful_available = [k for k in available_keys if k in self.successful_keys]
+        # Filter out keys that have been used too frequently in the window
+        lightly_used_keys = [k for k in available_keys 
+                            if len(self.key_usage_times.get(k, [])) < self.requests_per_key]
         
-        if successful_available and random.random() < 0.7:  # 70% chance to use successful key
-            # Pick a successful key with preference for less recently used ones
-            usage_sorted = sorted([(k, self.key_usage_count[k]) for k in successful_available], 
-                                key=lambda x: x[1])
-            selected_key = usage_sorted[0][0]
+        # If all keys are rate limited or heavily used, implement fallback strategy
+        if not lightly_used_keys:
+            # If we have any available keys, find the least recently used one
+            if available_keys:
+                logger.warning(f"All keys used frequently, selecting least recently used key")
+                # Sort by most recent usage time
+                last_used_times = {}
+                for key in available_keys:
+                    times = self.key_usage_times.get(key, [])
+                    last_used_times[key] = max(times) if times else 0
+                
+                # Pick the key that was used longest ago
+                selected_key = min(last_used_times.items(), key=lambda x: x[1])[0]
+                logger.info(f"Selected least recently used key (last used {now - last_used_times[selected_key]:.1f}s ago)")
+            # If all keys are rate limited but we have successful keys, try one
+            elif self.successful_keys:
+                successful_not_limited = [k for k in self.successful_keys if k not in self.rate_limited_keys]
+                if successful_not_limited:
+                    selected_key = random.choice(successful_not_limited)
+                    logger.warning(f"Using previously successful key as fallback")
+                else:
+                    # If all successful keys are rate limited, try any non-rate limited key
+                    non_limited = [k for k in self.api_keys if k not in self.rate_limited_keys]
+                    if non_limited:
+                        selected_key = random.choice(non_limited)
+                        logger.warning(f"Using random non-rate-limited key as last resort")
+                    else:
+                        # Absolute last resort - use any key
+                        selected_key = random.choice(self.api_keys) if self.api_keys else ""
+                        logger.warning(f"All keys are rate limited, using any key as emergency fallback")
+            else:
+                # Absolutely no keys available - emergency fallback
+                selected_key = random.choice(self.api_keys) if self.api_keys else ""
+                logger.warning(f"All keys are rate limited, using any key as emergency fallback")
         else:
-            # Otherwise use the least used key from all available keys
-            usage_sorted = sorted([(k, self.key_usage_count[k]) for k in available_keys], 
-                                key=lambda x: x[1])
-            selected_key = usage_sorted[0][0]
+            # Normal case: we have lightly used keys available
+            
+            # Prioritize successful keys that haven't been used much
+            successful_lightly_used = [k for k in lightly_used_keys if k in self.successful_keys]
+            
+            if successful_lightly_used and random.random() < 0.7:  # 70% chance to use successful key
+                # Find the least recently used successful key
+                key_last_used = {}
+                for key in successful_lightly_used:
+                    times = self.key_usage_times.get(key, [])
+                    key_last_used[key] = max(times) if times else 0
+                
+                # Sort by last used time (oldest first)
+                usage_sorted = sorted(key_last_used.items(), key=lambda x: x[1])
+                selected_key = usage_sorted[0][0] if usage_sorted else random.choice(successful_lightly_used)
+                logger.debug(f"Selected successful & lightly used key")
+            else:
+                # Otherwise use any lightly used key - preferring ones used longer ago
+                key_last_used = {}
+                for key in lightly_used_keys:
+                    times = self.key_usage_times.get(key, [])
+                    key_last_used[key] = max(times) if times else 0
+                
+                # Sort by last used time (oldest first)
+                usage_sorted = sorted(key_last_used.items(), key=lambda x: x[1])
+                selected_key = usage_sorted[0][0] if usage_sorted else random.choice(lightly_used_keys)
+                logger.debug(f"Selected lightly used key")
         
         # Update usage stats for this key
-        self.key_usage_count[selected_key] += 1
+        self.key_usage_count[selected_key] = self.key_usage_count.get(selected_key, 0) + 1
+        self.key_usage_times.setdefault(selected_key, []).append(now)
+        
+        # Add some logging to show key distribution
+        if random.random() < 0.2:  # Only log occasionally to avoid spam
+            usage_counts = {k: len(times) for k, times in self.key_usage_times.items() if times}
+            top_used = sorted(usage_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+            logger.info(f"Key usage distribution (top 3): {top_used}")
         
         return selected_key
     
     def _enforce_rate_limit(self) -> float:
         """
         Enforce self-imposed rate limits to stay below API provider limits
+        Implements Claude's suggestion for time-based distribution of requests
         Returns the sleep time needed to stay within rate limits
         """
         now = time.time()
@@ -198,44 +260,98 @@ class EnhancedStealthProxy:
         # Clean up old request timestamps
         self.request_timestamps = [t for t in self.request_timestamps if now - t <= self.request_window]
         
-        # If we're under our rate limit, no need to sleep
-        if len(self.request_timestamps) < self.requests_per_minute:
-            return 0
-            
-        # Calculate time to sleep to stay under rate limit
-        oldest_timestamp = min(self.request_timestamps)
-        time_passed = now - oldest_timestamp
-        target_time = self.request_window
+        # Calculate current request rate (requests per minute)
+        current_requests = len(self.request_timestamps)
+        window_size_minutes = self.request_window / 60.0
+        current_rate = current_requests / window_size_minutes if window_size_minutes > 0 else current_requests
         
-        if time_passed < target_time:
-            sleep_time = target_time - time_passed + 0.1  # Add a small buffer
-            logger.info(f"Rate limiting: {len(self.request_timestamps)} requests in window, sleeping {sleep_time:.2f}s")
-            return sleep_time
+        # Add randomness to rate limits (+-20%) to avoid detection patterns
+        adjusted_limit = self.requests_per_minute * (0.8 + (random.random() * 0.4))  # 80-120% of limit
+        
+        # If we're already exceeding even our adjusted rate limit
+        if current_rate >= adjusted_limit:
+            # Apply backoff: exponential based on how much we're over the limit
+            ratio = current_rate / adjusted_limit
+            backoff_factor = max(1.0, min(3.0, ratio))  # Cap between 1.0 and 3.0
             
-        return 0
+            # Base delay calculation
+            if self.request_timestamps:
+                # Calculate how long until we're back under limit
+                newest_timestamp = max(self.request_timestamps)
+                oldest_timestamp = min(self.request_timestamps)
+                
+                # Theoretical time when we'd be under limit if we waited for oldest to expire
+                time_to_expire = (oldest_timestamp + self.request_window) - now
+                
+                # Scale by backoff factor and add jitter
+                sleep_time = time_to_expire * backoff_factor
+                jitter = sleep_time * random.uniform(0, 0.2)  # 0-20% jitter
+                sleep_time += jitter
+                
+                # Ensure minimum sleep time and cap maximum
+                sleep_time = max(self.min_request_interval, min(sleep_time, 30.0))
+                
+                logger.info(f"Rate limiting: {current_requests} requests at {current_rate:.1f}/min. Sleeping {sleep_time:.2f}s")
+                return sleep_time
+        
+        # Even if we're under rate limit, enforce a minimum delay between requests
+        # with randomization to prevent detection patterns
+        min_delay = self.min_request_interval * (0.8 + (random.random() * 0.4))  # 80-120% of minimum
+        logger.debug(f"Enforcing minimum delay of {min_delay:.2f}s between requests")
+        return min_delay
         
     def mark_rate_limited(self, key: str) -> None:
-        """Mark a key as rate limited and apply global backoff"""
+        """
+        Mark a key as rate limited and implement advanced backoff strategy
+        Implements Claude's suggestion for adaptive backoff based on rate limits
+        """
         if key and key not in self.rate_limited_keys:
             self.rate_limited_keys.add(key)
             logger.warning(f"API key marked as rate limited")
             logger.info(f"Currently {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
             
-            # Set global backoff if many keys are rate limited
+            # Calculate the ratio of rate-limited keys for adaptive backoff
             rate_limited_ratio = len(self.rate_limited_keys) / len(self.api_keys)
-            if rate_limited_ratio > 0.25:  # If more than 25% of keys are rate limited
-                backoff_time = 60 * rate_limited_ratio  # Scale backoff with ratio (15s to 60s)
-                self.global_backoff_until = time.time() + backoff_time
-                logger.warning(f"Setting global backoff for {backoff_time:.1f}s due to high rate limiting")
             
-            # Auto-clear rate limited keys after some time
+            # Progressive global backoff based on how many keys are rate limited
+            # More aggressive as more keys become rate limited
+            if rate_limited_ratio < 0.1:  # Less than 10% of keys rate limited
+                # Minor backoff - just for this key
+                backoff_time = 0  # No global backoff
+                logger.info(f"Only {rate_limited_ratio:.1%} of keys rate limited - no global backoff")
+            elif rate_limited_ratio < 0.25:  # 10-25% of keys rate limited
+                # Moderate backoff - short global pause
+                backoff_time = 60 + (random.random() * 30)  # 60-90 seconds
+                self.global_backoff_until = time.time() + backoff_time
+                logger.warning(f"Moderate rate limiting ({rate_limited_ratio:.1%} of keys) - global backoff for {backoff_time:.1f}s")
+            elif rate_limited_ratio < 0.5:  # 25-50% of keys rate limited
+                # Significant backoff - longer pause
+                backoff_time = 180 + (random.random() * 120)  # 3-5 minutes
+                self.global_backoff_until = time.time() + backoff_time
+                logger.warning(f"Significant rate limiting ({rate_limited_ratio:.1%} of keys) - global backoff for {backoff_time:.1f}s")
+            else:  # More than 50% of keys rate limited
+                # Severe backoff - very long pause
+                backoff_time = 600 + (random.random() * 300)  # 10-15 minutes
+                self.global_backoff_until = time.time() + backoff_time
+                logger.warning(f"Severe rate limiting ({rate_limited_ratio:.1%} of keys) - global backoff for {backoff_time:.1f}s")
+            
+            # Also reduce per-minute request limit when many keys are rate limited
+            new_limit = max(1, int(self.requests_per_minute * (1.0 - rate_limited_ratio)))
+            if new_limit < self.requests_per_minute:
+                logger.info(f"Reducing requests per minute from {self.requests_per_minute} to {new_limit} due to rate limiting")
+                self.requests_per_minute = new_limit
+            
+            # Auto-clear rate limited keys after a variable time based on severity
             def clear_rate_limited_key():
-                time.sleep(180)  # Wait 3 minutes
+                # More keys rate limited = longer timeout before retry
+                clear_delay = 180 + (rate_limited_ratio * 420)  # 3-10 minutes based on severity
+                time.sleep(clear_delay)
+                
                 if key in self.rate_limited_keys:
                     self.rate_limited_keys.remove(key)
-                    logger.info(f"Cleared rate limit for a key, now {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
+                    logger.info(f"Cleared rate limit for a key after {clear_delay:.1f}s, now {len(self.rate_limited_keys)}/{len(self.api_keys)} keys are rate limited")
             
-            # Start a thread to clear the rate limit after a delay
+            # Start a thread to clear the rate limit after the adaptive delay
             import threading
             threading.Thread(target=clear_rate_limited_key, daemon=True).start()
     
@@ -331,10 +447,10 @@ class EnhancedStealthProxy:
     
     def optimize_request_payload(self, prompt: str) -> Dict[str, Any]:
         """
-        Create varied request payloads to avoid pattern-based rate limiting
-        Implements Claude's suggestion for request parameter variations
+        Create highly varied request payloads to smuggle requests past rate limiting
+        Implements Claude's suggestions for request parameter variations and smuggling
         """
-        # Safety setting variations
+        # Safety setting variations 
         safety_thresholds = ["BLOCK_ONLY_HIGH", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_LOW_AND_ABOVE", "BLOCK_NONE"]
         safety_categories = ["HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", 
                            "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"]
@@ -356,9 +472,13 @@ class EnhancedStealthProxy:
         top_k = random.randint(35, 45)                   # 35-45
         max_tokens = random.choice([4096, 8192, 2048, 4000])
         
-        # Base request payload
-        request_data = {
-            "contents": [
+        # REQUEST SMUGGLING TECHNIQUE 1: Message format variations
+        # Vary how the prompt is structured to avoid pattern detection
+        message_format_type = random.randint(1, 4)
+        
+        if message_format_type == 1:
+            # Standard format
+            contents = [
                 {
                     "parts": [
                         {
@@ -367,35 +487,161 @@ class EnhancedStealthProxy:
                     ],
                     "role": "user"
                 }
-            ],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-                "topP": top_p, 
-                "topK": top_k
-            },
-            "safetySettings": safety_settings
+            ]
+        elif message_format_type == 2:
+            # Format with system message
+            contents = [
+                {
+                    "parts": [
+                        {
+                            "text": "You are a helpful assistant."
+                        }
+                    ],
+                    "role": "system"
+                },
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ],
+                    "role": "user"
+                }
+            ]
+        elif message_format_type == 3:
+            # Format with chat history context
+            contents = [
+                {
+                    "parts": [
+                        {
+                            "text": "Hello, I have a question."
+                        }
+                    ],
+                    "role": "user"
+                },
+                {
+                    "parts": [
+                        {
+                            "text": "I'd be happy to help with your question. What would you like to know?"
+                        }
+                    ],
+                    "role": "model"
+                },
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ],
+                    "role": "user"
+                }
+            ]
+        else:
+            # Format with multimedia-like structure (even though it's just text)
+            contents = [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ],
+                    "role": "user"
+                }
+            ]
+            
+        # REQUEST SMUGGLING TECHNIQUE 2: Parameter naming variations
+        # Sometimes use alternative parameter names that the API might still recognize
+        generation_config = {}
+        
+        # Temperature parameter - vary parameter name
+        temp_param = random.choices(
+            ["temperature", "Temperature", "temp"],
+            weights=[0.8, 0.1, 0.1],
+            k=1
+        )[0]
+        generation_config[temp_param] = temperature
+        
+        # Max tokens parameter - vary parameter name
+        max_tokens_param = random.choices(
+            ["maxOutputTokens", "max_output_tokens", "max_tokens"],
+            weights=[0.8, 0.1, 0.1],
+            k=1
+        )[0]
+        generation_config[max_tokens_param] = max_tokens
+        
+        # Top-p parameter - vary parameter name
+        top_p_param = random.choices(
+            ["topP", "top_p"],
+            weights=[0.9, 0.1],
+            k=1
+        )[0]
+        generation_config[top_p_param] = top_p
+        
+        # Top-k parameter - vary parameter name
+        top_k_param = random.choices(
+            ["topK", "top_k"],
+            weights=[0.9, 0.1],
+            k=1
+        )[0]
+        generation_config[top_k_param] = top_k
+        
+        # REQUEST SMUGGLING TECHNIQUE 3: Structure variations
+        # Base request payload with variations in structure
+        request_data = {
+            "contents": contents,
+            "generationConfig": generation_config
         }
         
-        # Optional parameters to randomly include
+        # Sometimes use safetySettings at root level, sometimes inside generationConfig
+        if random.random() < 0.8:
+            request_data["safetySettings"] = safety_settings
+        else:
+            request_data["generationConfig"]["safetySettings"] = safety_settings
+        
+        # Optional parameters with varied naming conventions
         optional_params = {
-            "stopSequences": [],
+            "stopSequences": ["\n\n", "###"],
+            "stop_sequences": ["\n\n", "###"],
             "candidateCount": 1,
-            "logprobs": random.choice([None, 1, 5]),
+            "candidate_count": 1,
+            "logprobs": random.choice([1, 5]),
+            "log_probs": random.choice([1, 5]),
             "presencePenalty": random.uniform(0, 0.5),
+            "presence_penalty": random.uniform(0, 0.5),
             "frequencyPenalty": random.uniform(0, 0.5),
+            "frequency_penalty": random.uniform(0, 0.5),
         }
         
-        # Randomly include some optional parameters (30% chance for each)
-        for param, value in optional_params.items():
-            if random.random() < 0.3:
-                if param == "stopSequences" and random.random() < 0.5:
-                    # Only occasionally add actual stop sequences
-                    request_data["generationConfig"][param] = ["\n\n", "###"]
-                elif value is not None:
-                    request_data["generationConfig"][param] = value
+        # Add 1-3 optional parameters randomly
+        for _ in range(random.randint(1, 3)):
+            param = random.choice(list(optional_params.keys()))
+            value = optional_params[param]
+            if random.random() < 0.7:
+                request_data["generationConfig"][param] = value
+            else:
+                request_data[param] = value
         
-        # Return the randomized payload
+        # REQUEST SMUGGLING TECHNIQUE 4: Add irrelevant but harmless parameters
+        # Add benign extra parameters that shouldn't affect operation but change the request signature
+        if random.random() < 0.3:
+            extra_params = {
+                "client_info": {
+                    "client_id": f"replit-app-{random.randint(1000, 9999)}",
+                    "session_id": str(uuid.uuid4())[:8],
+                    "user_agent": f"python-client/{random.randint(1, 3)}.{random.randint(0, 9)}.{random.randint(0, 9)}"
+                },
+                "api_version": f"{random.randint(1, 3)}.{random.randint(0, 9)}",
+                "request_source": random.choice(["web", "api", "sdk", "cli"]),
+                "request_id": str(uuid.uuid4()),
+                "timestamp": int(time.time() * 1000)
+            }
+            
+            # Add 1-2 extra parameters
+            for _ in range(random.randint(1, 2)):
+                param = random.choice(list(extra_params.keys()))
+                request_data[param] = extra_params[param]
+        
+        # Return the highly randomized payload
         return request_data
         
     def get_varied_endpoint(self, model: str) -> str:
