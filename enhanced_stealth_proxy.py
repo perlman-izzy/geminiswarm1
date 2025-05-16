@@ -553,37 +553,11 @@ class EnhancedStealthProxy:
         # Sometimes use alternative parameter names that the API might still recognize
         generation_config = {}
         
-        # Temperature parameter - vary parameter name
-        temp_param = random.choices(
-            ["temperature", "Temperature", "temp"],
-            weights=[0.8, 0.1, 0.1],
-            k=1
-        )[0]
-        generation_config[temp_param] = temperature
-        
-        # Max tokens parameter - vary parameter name
-        max_tokens_param = random.choices(
-            ["maxOutputTokens", "max_output_tokens", "max_tokens"],
-            weights=[0.8, 0.1, 0.1],
-            k=1
-        )[0]
-        generation_config[max_tokens_param] = max_tokens
-        
-        # Top-p parameter - vary parameter name
-        top_p_param = random.choices(
-            ["topP", "top_p"],
-            weights=[0.9, 0.1],
-            k=1
-        )[0]
-        generation_config[top_p_param] = top_p
-        
-        # Top-k parameter - vary parameter name
-        top_k_param = random.choices(
-            ["topK", "top_k"],
-            weights=[0.9, 0.1],
-            k=1
-        )[0]
-        generation_config[top_k_param] = top_k
+        # Only use known valid parameter names that the API accepts
+        generation_config["temperature"] = temperature
+        generation_config["maxOutputTokens"] = max_tokens
+        generation_config["topP"] = top_p
+        generation_config["topK"] = top_k
         
         # REQUEST SMUGGLING TECHNIQUE 3: Structure variations
         # Base request payload with variations in structure
@@ -592,54 +566,17 @@ class EnhancedStealthProxy:
             "generationConfig": generation_config
         }
         
-        # Sometimes use safetySettings at root level, sometimes inside generationConfig
-        if random.random() < 0.8:
-            request_data["safetySettings"] = safety_settings
-        else:
-            request_data["generationConfig"]["safetySettings"] = safety_settings
+        # Safety settings always at root level to ensure API compatibility
+        request_data["safetySettings"] = safety_settings
         
-        # Optional parameters with varied naming conventions
-        optional_params = {
-            "stopSequences": ["\n\n", "###"],
-            "stop_sequences": ["\n\n", "###"],
-            "candidateCount": 1,
-            "candidate_count": 1,
-            "logprobs": random.choice([1, 5]),
-            "log_probs": random.choice([1, 5]),
-            "presencePenalty": random.uniform(0, 0.5),
-            "presence_penalty": random.uniform(0, 0.5),
-            "frequencyPenalty": random.uniform(0, 0.5),
-            "frequency_penalty": random.uniform(0, 0.5),
-        }
-        
-        # Add 1-3 optional parameters randomly
-        for _ in range(random.randint(1, 3)):
-            param = random.choice(list(optional_params.keys()))
-            value = optional_params[param]
-            if random.random() < 0.7:
-                request_data["generationConfig"][param] = value
-            else:
-                request_data[param] = value
-        
-        # REQUEST SMUGGLING TECHNIQUE 4: Add irrelevant but harmless parameters
-        # Add benign extra parameters that shouldn't affect operation but change the request signature
+        # Only use known valid optional parameters the API accepts
         if random.random() < 0.3:
-            extra_params = {
-                "client_info": {
-                    "client_id": f"replit-app-{random.randint(1000, 9999)}",
-                    "session_id": str(uuid.uuid4())[:8],
-                    "user_agent": f"python-client/{random.randint(1, 3)}.{random.randint(0, 9)}.{random.randint(0, 9)}"
-                },
-                "api_version": f"{random.randint(1, 3)}.{random.randint(0, 9)}",
-                "request_source": random.choice(["web", "api", "sdk", "cli"]),
-                "request_id": str(uuid.uuid4()),
-                "timestamp": int(time.time() * 1000)
-            }
+            request_data["generationConfig"]["stopSequences"] = ["\n\n", "###"]
             
-            # Add 1-2 extra parameters
-            for _ in range(random.randint(1, 2)):
-                param = random.choice(list(extra_params.keys()))
-                request_data[param] = extra_params[param]
+        if random.random() < 0.3:
+            request_data["generationConfig"]["candidateCount"] = 1
+        
+        # Remove the extra parameters technique as it's causing JSON validation errors
         
         # Return the highly randomized payload
         return request_data
