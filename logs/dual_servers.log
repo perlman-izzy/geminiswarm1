@@ -1,0 +1,9 @@
+2025-05-09 04:43:01,625 - dual_servers - INFO - Starting Main application...
+2025-05-09 04:43:03,635 - dual_servers - INFO - Starting Extended proxy...
+2025-05-09 04:43:03,650 - dual_servers - INFO - All servers started.
+2025-05-09 04:43:03,650 - dual_servers - INFO - Main application: http://localhost:5000
+2025-05-09 04:43:03,651 - dual_servers - INFO - Extended proxy:   http://localhost:3000
+2025-05-09 04:43:07,641 - dual_servers - ERROR - Main application exited with code 1
+2025-05-09 04:43:07,653 - dual_servers - ERROR - One or more servers failed.
+2025-05-09 04:43:07,654 - dual_servers - INFO - Main application stopped.
+2025-05-09 04:43:08,020 - dual_servers - INFO - Extended proxy stopped.

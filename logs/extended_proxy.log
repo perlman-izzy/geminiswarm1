@@ -1,0 +1,7 @@
+[2025-05-09 04:43:04 +0000] [13757] [INFO] Starting gunicorn 23.0.0
+[2025-05-09 04:43:04 +0000] [13757] [INFO] Listening at: http://0.0.0.0:3000 (13757)
+[2025-05-09 04:43:04 +0000] [13757] [INFO] Using worker: sync
+[2025-05-09 04:43:04 +0000] [13763] [INFO] Booting worker with pid: 13763
+[2025-05-09 04:43:07 +0000] [13757] [INFO] Handling signal: term
+[2025-05-09 04:43:07 +0000] [13763] [INFO] Worker exiting (pid: 13763)
+[2025-05-09 04:43:07 +0000] [13757] [INFO] Shutting down: Master
